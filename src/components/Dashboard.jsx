@@ -403,7 +403,8 @@ export default function Dashboard() {
     }
     setStaffNameError(false);
     
-    const newId = newStaffName.toLowerCase().replace(/\s+/g, '-');
+    // Keep original case for ID (replace spaces with dashes)
+    const newId = newStaffName.trim().replace(/\s+/g, '-');
     await saveStaffToFirestore({
       id: newId,
       name: newStaffName,
@@ -760,14 +761,14 @@ export default function Dashboard() {
             <DialogDescription>Gérez les membres de l'équipe présents aujourd'hui</DialogDescription>
           </DialogHeader>
             
-            <div className="staff-list">
+            <div className="staff-list" style={{ padding: 24 }}>
               {!Array.isArray(staff) || staff.length === 0 ? (
                 <p style={{ color: '#6B7280', textAlign: 'center', padding: '20px' }}>
                   Ajoutez un membre pour commencer
                 </p>
               ) : (
                 staff.map(s => (
-                  <div key={s.id} className="staff-row">
+                  <div key={s.id} className="staff-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                     {confirmDeleteId === s.id ? (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 8 }}>
                         <span>Supprimer <strong>{s.name}</strong> ?</span>
@@ -797,7 +798,7 @@ export default function Dashboard() {
                           <strong>{s.name}</strong>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <label className="toggle">
+                          <label className="toggle" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                             <input 
                               type="checkbox" 
                               checked={s.presentToday}
@@ -805,14 +806,22 @@ export default function Dashboard() {
                             />
                             <span>{s.presentToday ? 'Présente' : 'Absente'}</span>
                           </label>
-                          <Button 
-                            variant="destructive" 
-                            size="sm"
+                          <button 
                             onClick={() => setConfirmDeleteId(s.id)}
                             title="Supprimer"
+                            style={{ 
+                              background: 'none', 
+                              border: 'none', 
+                              color: '#6B7280', 
+                              fontSize: 16, 
+                              cursor: 'pointer',
+                              padding: 4
+                            }}
+                            onMouseOver={(e) => e.target.style.color = '#DC2626'}
+                            onMouseOut={(e) => e.target.style.color = '#6B7280'}
                           >
                             ✕
-                          </Button>
+                          </button>
                         </div>
                       </>
                     )}
@@ -838,7 +847,11 @@ export default function Dashboard() {
                   borderColor: staffNameError ? '#DC2626' : undefined
                 }}
               />
-              <Button size="sm" onClick={handleAddStaff}>
+              <Button 
+                size="sm" 
+                onClick={handleAddStaff}
+                style={{ padding: '8px 16px' }}
+              >
                 Ajouter
               </Button>
             </div>
@@ -1094,7 +1107,7 @@ function ReportDetail({ report, onBack }) {
 
       {/* Section 3 - Par chambre */}
       <div style={{ marginBottom: 24 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{t('byRoom') || 'Par chambre'}</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Par chambre</h3>
         <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead style={{ background: '#F9FAFB' }}>
@@ -1103,10 +1116,15 @@ function ReportDetail({ report, onBack }) {
                 <th style={{ padding: 10, textAlign: 'left', fontWeight: 600 }}>Assignée à</th>
                 <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Type</th>
                 <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Statut</th>
+                <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Incident</th>
               </tr>
             </thead>
             <tbody>
-              {report.tasksSnapshot?.map((task) => {
+              {report.tasksSnapshot?.sort((a, b) => {
+                const numA = parseInt(a.roomNumber.toString().replace(/-.*/, '')) || 0;
+                const numB = parseInt(b.roomNumber.toString().replace(/-.*/, '')) || 0;
+                return numA - numB;
+              }).map((task) => {
                 const staffMember = report.byStaff?.find(s => s.name === task.assignedTo);
                 let statusLabel = task.status;
                 let statusColor = '#6B7280';
@@ -1123,6 +1141,9 @@ function ReportDetail({ report, onBack }) {
                     <td style={{ padding: 10 }}>{task.assignedTo || '-'}</td>
                     <td style={{ padding: 10, textAlign: 'center' }}>{task.type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
                     <td style={{ padding: 10, textAlign: 'center', color: statusColor, fontWeight: 500 }}>{statusLabel}</td>
+                    <td style={{ padding: 10, textAlign: 'center', color: task.incident ? '#DC2626' : '#6B7280' }}>
+                      {task.incident || '-'}
+                    </td>
                   </tr>
                 );
               })}
@@ -1177,7 +1198,6 @@ function ReportDetail({ report, onBack }) {
                 <div style={{ display: 'flex', gap: 12 }}>
                   <span style={{ fontWeight: 600, minWidth: 40 }}>{room.roomNumber}</span>
                   <span>{room.type === 'recouche' ? '🛏️ Recouche' : '🧹 Blanc'}</span>
-                  {room.incident && <span style={{ color: '#DC2626', fontSize: 12 }}>({room.incident})</span>}
                 </div>
                 <span style={{ color: '#6B7280', fontSize: 14 }}>{room.assignedTo}</span>
               </div>
