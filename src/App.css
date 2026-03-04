@@ -704,3 +704,35 @@ button {
   padding: 24px;
   border-radius: 12px;
 }
+
+/* ============================================
+   Radix UI Global Styles
+   ============================================ */
+
+/* Dialog / Modal */
+[data-slot="dialog-content"], .dialog-content {
+  padding: 24px;
+  border-radius: 12px;
+}
+
+/* Dropdown Menu */
+[data-slot="dropdown-menu-content"] {
+  padding: 8px;
+  border-radius: 8px;
+}
+
+/* Dropdown Menu Items */
+[data-slot="dropdown-menu-item"] {
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+[data-slot="dropdown-menu-item"]:hover {
+  background-color: #f3f4f6;
+}
+
+[data-slot="dropdown-menu-item"]:focus {
+  outline: none;
+  background-color: #e5e7eb;
+}
