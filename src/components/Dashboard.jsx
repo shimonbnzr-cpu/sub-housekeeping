@@ -1,0 +1,1190 @@
+import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { ROOMS, FLOORS, CLEANING_TYPES, STATUS_COLORS } from '../data/rooms';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { 
+  subscribeToTasks, 
+  subscribeToStaff,
+  setTask, 
+  updateTaskStatus, 
+  assignTask,
+  batchAssignTasks,
+  batchSetTasks,
+  resetDailyPlanning,
+  setLateCheckout,
+  updateStaffPresence,
+  autoAssignTasks,
+  resetAllTasks,
+  ensureAllRoomsHaveTasks,
+  deleteTask,
+  setStaff as saveStaffToFirestore,
+  deleteStaff,
+  subscribeToReports,
+  generateAndSaveReport
+} from '../services/firestore';
+import { parseMedialogFile } from '../services/import';
+
+export default function Dashboard() {
+  const { t, i18n } = useTranslation();
+  const [tasks, setTasks] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [filterStaff, setFilterStaff] = useState('all');
+  const [selectedRooms, setSelectedRooms] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [showTeamPanel, setShowTeamPanel] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importedTasks, setImportedTasks] = useState([]);
+  const [isImporting, setIsImporting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [lateCheckoutTime, setLateCheckoutTime] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const [activeTab, setActiveTab] = useState('planning'); // 'planning' | 'reports'
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [reports, setReports] = useState([]);
+
+  // Get today's date formatted
+  const today = new Date();
+  const dateStr = today.toLocaleDateString('fr-FR', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+
+  // Subscribe to realtime updates
+  useEffect(() => {
+    // Load saved language
+    const savedLang = localStorage.getItem('language');
+    if (savedLang && ['fr', 'en', 'ro'].includes(savedLang)) {
+      i18n.changeLanguage(savedLang);
+    }
+
+    let unsubStaff;
+    
+    const init = async () => {
+      // Ensure all rooms have tasks (create if missing)
+      await ensureAllRoomsHaveTasks();
+      
+      // Subscribe to staff
+      unsubStaff = subscribeToStaff((staffList) => {
+        if (staffList && Array.isArray(staffList)) {
+          setStaff(staffList);
+        }
+      });
+    };
+    
+    init();
+    
+    const unsubTasks = subscribeToTasks((taskList) => {
+      setTasks(taskList);
+      setLoading(false);
+    });
+    
+    const unsubReports = subscribeToReports((reportsList) => {
+      setReports(reportsList);
+    });
+    
+    return () => {
+      unsubTasks();
+      if (unsubStaff) unsubStaff();
+      if (unsubReports) unsubReports();
+    };
+  }, []);
+
+  // Get present staff only
+  const presentStaff = Array.isArray(staff) ? staff.filter(s => s.presentToday) : [];
+
+  // Get task for a room
+  const getTaskForRoom = (room) => {
+    return tasks.find(t => t.roomId === room.id) || null;
+  };
+
+  // Computed stats
+  const totalRooms = ROOMS.length;
+  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const progress = totalRooms > 0 ? Math.round((doneCount / totalRooms) * 100) : 0;
+
+  // Stats per staff member
+  const staffStats = Array.isArray(staff) ? staff.map(s => {
+    const assigned = tasks.filter(t => t.assignedTo === s.id).length;
+    const done = tasks.filter(t => t.assignedTo === s.id && t.status === 'done').length;
+    return { ...s, assigned, done };
+  }).filter(s => s.presentToday) : [];
+
+  // Filter rooms
+  const filteredRooms = ROOMS.filter(room => {
+    const task = getTaskForRoom(room);
+    
+    if (filterStaff !== 'all') {
+      if (task?.assignedTo !== filterStaff) {
+        return false;
+      }
+      if (!task?.assignedTo) return false;
+    }
+    return true;
+  });
+
+  // Check if selected filter has no rooms
+  const hasNoAssignedRooms = filterStaff !== 'all' && filteredRooms.length === 0 && !loading;
+
+  // Group by floor
+  const roomsByFloor = FLOORS.reduce((acc, floor) => {
+    acc[floor] = filteredRooms.filter(r => r.floor === floor);
+    return acc;
+  }, {});
+
+  // Selection handler - click vs drag
+  const dragTimerRef = useRef(null);
+  const isDraggingRef = useRef(false);
+
+  const handleRoomMouseDown = (room, e) => {
+    const task = getTaskForRoom(room);
+    if (task && (task.status === 'in_progress' || task.status === 'done')) {
+      return;
+    }
+    
+    // Start drag timer (150ms)
+    dragTimerRef.current = setTimeout(() => {
+      isDraggingRef.current = true;
+      setIsDragging(true);
+      setSelectedRooms(new Set([room.id]));
+    }, 150);
+  };
+
+  const handleRoomMouseUp = (room) => {
+    // If drag timer still running, it's a click
+    if (dragTimerRef.current) {
+      clearTimeout(dragTimerRef.current);
+      dragTimerRef.current = null;
+      
+      // Toggle selection on click
+      const task = getTaskForRoom(room);
+      if (!task || (task.status !== 'in_progress' && task.status !== 'done')) {
+        const newSelection = new Set(selectedRooms);
+        if (newSelection.has(room.id)) {
+          newSelection.delete(room.id);
+        } else {
+          newSelection.add(room.id);
+        }
+        setSelectedRooms(newSelection);
+      }
+    }
+    isDraggingRef.current = false;
+    setIsDragging(false);
+  };
+
+  const handleRoomMouseEnter = (room) => {
+    if (isDragging) {
+      const task = getTaskForRoom(room);
+      if (task && (task.status === 'in_progress' || task.status === 'done')) {
+        return;
+      }
+      setSelectedRooms(prev => new Set([...prev, room.id]));
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (dragTimerRef.current) {
+      clearTimeout(dragTimerRef.current);
+      dragTimerRef.current = null;
+    }
+    isDraggingRef.current = false;
+    setIsDragging(false);
+  };
+
+  const clearSelection = () => {
+    setSelectedRooms(new Set());
+  };
+
+  // Check if can change assignment (only if todo)
+  const canChangeAssignment = (roomId) => {
+    const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
+    if (!task) return true;
+    // Can't change if in_progress, done, dnd, or postponed
+    if (task.status === 'in_progress' || task.status === 'done' || task.status === 'dnd' || task.status === 'postponed') return false;
+    return true;
+  };
+
+  // Check if can change status (only if todo)
+  const canChangeStatus = (roomId) => {
+    const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
+    if (!task) return true;
+    // Can't change if not todo
+    if (task.status !== 'todo') return false;
+    return true;
+  };
+
+  // Check if can change late checkout (not if in_progress, done, dnd, or postponed)
+  const canChangeLateCheckout = (roomId) => {
+    const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
+    if (!task) return true;
+    if (task.status === 'in_progress' || task.status === 'done' || task.status === 'dnd' || task.status === 'postponed') return false;
+    return true;
+  };
+
+  // Create task if doesn't exist
+  const ensureTaskExists = async (roomId) => {
+    const room = ROOMS.find(r => r.id === roomId);
+    const task = getTaskForRoom(room);
+    if (!task) {
+      await setTask({
+        roomId: room.id,
+        roomNumber: room.number,
+        floor: room.floor,
+        type: 'blanc', // Default: à blanc
+        status: 'todo', // Default: à faire
+        assignedTo: null,
+        incident: null
+      });
+    }
+  };
+
+  // Actions
+  const handleAssign = async (staffId) => {
+    if (selectedRooms.size === 0) return;
+    
+    for (const roomId of selectedRooms) {
+      if (canChangeAssignment(roomId)) {
+        await ensureTaskExists(roomId);
+        await assignTask(roomId, staffId);
+      }
+    }
+  };
+
+  const handleTypeChange = async (type) => {
+    if (selectedRooms.size === 0) return;
+    
+    for (const roomId of selectedRooms) {
+      if (!canChangeStatus(roomId)) continue;
+      
+      const room = ROOMS.find(r => r.id === roomId);
+      const task = getTaskForRoom(room);
+      if (!task) {
+        await setTask({
+          roomId: room.id,
+          roomNumber: room.number,
+          floor: room.floor,
+          type,
+          status: 'todo',
+          assignedTo: null,
+          incident: null
+        });
+      } else {
+        await setTask({
+          ...task,
+          type,
+          roomId: room.id,
+          roomNumber: room.number,
+          floor: room.floor
+        });
+      }
+    }
+  };
+
+  const handleLateCheckout = async () => {
+    if (selectedRooms.size === 0 || !lateCheckoutTime) return;
+    
+    for (const roomId of selectedRooms) {
+      if (!canChangeLateCheckout(roomId)) continue;
+      await ensureTaskExists(roomId);
+      await setLateCheckout(roomId, lateCheckoutTime);
+    }
+    setLateCheckoutTime('');
+  };
+
+  const handleDelete = async () => {
+    if (selectedRooms.size === 0) return;
+    
+    for (const roomId of selectedRooms) {
+      await deleteTask(roomId);
+    }
+    clearSelection();
+  };
+
+  // Marquer comme terminé depuis la réception
+  const handleFinishFromReception = async () => {
+    if (selectedRooms.size === 0) return;
+    
+    for (const roomId of selectedRooms) {
+      await updateTaskStatus(roomId, 'done');
+    }
+    setShowFinishConfirm(false);
+    clearSelection();
+  };
+
+  // Liberer a room (mark as freed) - also clears late checkout
+  const handleFree = async () => {
+    if (selectedRooms.size === 0) return;
+    
+    for (const roomId of selectedRooms) {
+      if (!canChangeAssignment(roomId)) continue;
+      const room = ROOMS.find(r => r.id === roomId);
+      const task = getTaskForRoom(room);
+      if (!task) {
+        await setTask({
+          roomId: room.id,
+          roomNumber: room.number,
+          floor: room.floor,
+          type: 'blanc',
+          status: 'freed',
+          assignedTo: null,
+          incident: null,
+          lateCheckoutTime: null
+        });
+      } else {
+        await setTask({
+          ...task,
+          status: 'freed',
+          lateCheckoutTime: null,
+          roomId: room.id,
+          roomNumber: room.number,
+          floor: room.floor
+        });
+      }
+    }
+    clearSelection();
+  };
+
+  const handleResetAll = async () => {
+    await resetAllTasks(tasks);
+    setShowResetConfirm(false);
+  };
+
+  const handleAutoAssign = async () => {
+    // Get tasks that are not done, not in_progress, not dnd
+    const tasksToAssign = tasks.filter(t => t.status === 'todo');
+    await autoAssignTasks(tasksToAssign, staff);
+  };
+
+  // Import handlers
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setIsImporting(true);
+    try {
+      const parsed = await parseMedialogFile(file);
+      setImportedTasks(parsed);
+    } catch (error) {
+      console.error('Import error:', error);
+      alert('Erreur lors de l\'import: ' + error.message);
+    }
+    setIsImporting(false);
+  };
+
+  const confirmImport = async () => {
+    if (importedTasks.length === 0) return;
+    
+    await resetDailyPlanning();
+    await batchSetTasks(importedTasks);
+    
+    setShowImportModal(false);
+    setImportedTasks([]);
+  };
+
+  // Team management
+  const toggleStaffPresence = async (staffId, present) => {
+    await updateStaffPresence(staffId, present);
+  };
+
+  const [staffNameError, setStaffNameError] = useState(false);
+
+  const handleAddStaff = async () => {
+    if (!newStaffName.trim()) {
+      setStaffNameError(true);
+      return;
+    }
+    setStaffNameError(false);
+    
+    const newId = newStaffName.toLowerCase().replace(/\s+/g, '-');
+    await saveStaffToFirestore({
+      id: newId,
+      name: newStaffName,
+      language: 'FR',
+      presentToday: true
+    });
+    setNewStaffName('');
+  };
+
+  // Check if any selected room can be modified
+  const canModifySelected = Array.from(selectedRooms).some(roomId => canChangeAssignment(roomId));
+  const canChangeTypeForSelected = Array.from(selectedRooms).some(roomId => canChangeStatus(roomId));
+  const canChangeLateCheckoutForSelected = Array.from(selectedRooms).some(roomId => canChangeLateCheckout(roomId));
+
+  // Check if auto-assign is allowed (only if there are todo tasks)
+  const canAutoAssign = tasks.some(t => t.status === 'todo');
+
+  // Check if reset is allowed (only if no tasks in progress)
+  const canReset = !tasks.some(t => t.status === 'in_progress');
+
+  // Helper functions
+  const getStatusClass = (task) => {
+    if (!task) return 'status-todo';
+    return `status-${task.status}`;
+  };
+
+  const getCardStyle = (task, isSelected) => {
+    const status = task?.status || 'todo';
+    const isAssigned = task?.assignedTo;
+    const selectable = canSelect(task);
+    
+    let bgColor = STATUS_COLORS[status] || '#FFFFFF';
+    let borderColor = '#D1D5DB'; // gray-300
+    let borderWidth = 2;
+    
+    // Assigned = gray border (not blue, blue is for selection)
+    if (isAssigned && status !== 'in_progress' && status !== 'done') {
+      borderColor = '#9CA3AF'; // gray-400
+    }
+    
+    // Selected = blue border
+    if (isSelected) {
+      borderColor = '#2563EB';
+      borderWidth = 3;
+      bgColor = '#EFF6FF'; // light blue background
+    }
+    
+    return {
+      backgroundColor: bgColor,
+      borderColor,
+      borderWidth,
+      borderStyle: 'solid',
+      userSelect: 'none',
+      cursor: selectable ? 'pointer' : 'default'
+    };
+  };
+
+  const canSelect = (task) => {
+    if (!task) return true;
+    return task.status !== 'in_progress' && task.status !== 'done';
+  };
+
+  if (loading) {
+    return <div className="app"><div className="main">Chargement...</div></div>;
+  }
+
+  return (
+    <div className="app" onMouseUp={handleMouseUp}>
+      <header className="header">
+        <div>
+          <h1>🏨 Hôtel SUB</h1>
+          <p style={{ fontSize: 12, color: '#6B7280' }}>{dateStr}</p>
+        </div>
+        <div className="header-actions" style={{ display: 'flex', gap: 8 }}>
+          <Button variant="secondary" size="sm" onClick={() => setShowTeamPanel(true)}>
+            Équipe
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setShowImportModal(true)}>
+            Importer
+          </Button>
+          <Button variant="outline" size="sm" onClick={async () => {
+            if (confirm('Générer le rapport du jour ?')) {
+              await generateAndSaveReport(tasks, staff);
+              alert('Rapport généré !');
+            }
+          }}>
+            📊 Rapport
+          </Button>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', borderBottom: '1px solid #E5E7EB', marginBottom: 16 }}>
+        <button
+          onClick={() => { setActiveTab('planning'); setSelectedReport(null); }}
+          style={{
+            padding: '12px 24px',
+            border: 'none',
+            background: activeTab === 'planning' ? '#3B82F6' : 'transparent',
+            color: activeTab === 'planning' ? 'white' : '#6B7280',
+            fontWeight: 600,
+            cursor: 'pointer',
+            borderRadius: '8px 8px 0 0',
+            marginRight: 4
+          }}
+        >
+          {t('allRooms')}
+        </button>
+        <button
+          onClick={() => setActiveTab('reports')}
+          style={{
+            padding: '12px 24px',
+            border: 'none',
+            background: activeTab === 'reports' ? '#3B82F6' : 'transparent',
+            color: activeTab === 'reports' ? 'white' : '#6B7280',
+            fontWeight: 600,
+            cursor: 'pointer',
+            borderRadius: '8px 8px 0 0'
+          }}
+        >
+          {t('reports')}
+        </button>
+      </div>
+
+      <main className="main" onClick={(e) => {
+        if (e.target.closest('.bottom-panel') || e.target.closest('.btn') || e.target.closest('.modal')) return;
+      }}>
+        {/* Reports Tab */}
+        {activeTab === 'reports' && (
+          selectedReport ? (
+            <ReportDetail report={selectedReport} onBack={() => setSelectedReport(null)} />
+          ) : (
+            <ReportsList reports={reports} onSelect={setSelectedReport} />
+          )
+        )}
+
+        {/* Planning Tab */}
+        {activeTab === 'planning' && (
+        <div className="planning-content">
+        <div className="progress-bar">
+          <div className="stats">
+            <span>{doneCount}/{totalRooms} terminées</span>
+            <span>{progress}%</span>
+          </div>
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${progress}%` }}></div>
+          </div>
+          {staffStats.length > 0 && (
+            <div className="staff-progress" style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13, color: '#6B7280' }}>
+              {staffStats.map(s => (
+                <span key={s.id}>{s.name} {s.done}/{s.assigned}</span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Filters */}
+        <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                {filterStaff === 'all' ? 'Toutes les chambres' : staff.find(s => s.id === filterStaff)?.name || 'Toutes les chambres'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => setFilterStaff('all')}>
+                Toutes les chambres
+              </DropdownMenuItem>
+              {Array.isArray(staff) && staff.map(s => (
+                <DropdownMenuItem key={s.id} onClick={() => setFilterStaff(s.id)}>
+                  {s.name} {s.presentToday ? '' : '(absente)'}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          
+          <Button variant="secondary" size="sm" onClick={handleAutoAssign} disabled={!canAutoAssign}>
+            Auto-assigner
+          </Button>
+          
+          <Button variant="secondary" size="sm" onClick={() => setShowResetConfirm(true)} disabled={!canReset}>
+            Réinitialiser
+          </Button>
+        </div>
+
+        {/* No rooms message */}
+        {hasNoAssignedRooms && (
+          <div className="no-rooms-message">
+            <p>Aucune chambre assignée</p>
+          </div>
+        )}
+
+        {/* Rooms by floor - full width */}
+        {!hasNoAssignedRooms && FLOORS.map(floor => {
+          const floorRooms = roomsByFloor[floor];
+          if (floorRooms.length === 0) return null;
+          
+          return (
+            <div key={floor} className="floor-section floor-section-full">
+              <div className="floor-title">{floor}</div>
+              <div className="rooms-grid rooms-grid-full">
+                {floorRooms.map(room => {
+                  const task = getTaskForRoom(room);
+                  const assignedStaff = task?.assignedTo ? (Array.isArray(staff) && staff.find(s => s.id === task.assignedTo)) : null;
+                  const isSelected = selectedRooms.has(room.id);
+                  const selectable = canSelect(task);
+                  
+                  return (
+                    <div 
+                      key={room.id} 
+                      className={`room-card ${getStatusClass(task)}`}
+                      onMouseDown={(e) => handleRoomMouseDown(room, e)}
+                      onMouseUp={() => handleRoomMouseUp(room)}
+                      onMouseEnter={() => handleRoomMouseEnter(room)}
+                      style={getCardStyle(task, isSelected)}
+                      title={task?.status === 'dnd' ? 'Ne pas déranger' : (task?.incident || `Chambre ${room.number}`)}
+                    >
+                      <div className="room-number">{room.number}</div>
+                      {task?.type && (
+                        <div className={`room-type-badge ${task.type}`}>
+                          {task.type === 'blanc' ? 'BLANC' : 'RECOUCHE'}
+                        </div>
+                      )}
+                      {assignedStaff && (
+                        <div className="room-meta">
+                          <span className="staff-name">{assignedStaff.name}</span>
+                        </div>
+                      )}
+                      <div className="icons">
+                        {task?.lateCheckoutTime && <span title={`Late checkout: ${task.lateCheckoutTime}`}>🕐</span>}
+                        {task?.linenChange && <span title="Draps">🛏</span>}
+                        {task?.status === 'dnd' && <span title="Ne pas déranger">🚫</span>}
+                        {task?.incident && task.incident.length > 0 && (
+                          <span style={{ cursor: 'help', fontSize: '12px', position: 'relative' }} title={task.incident}>
+                            💬
+                            <span style={{
+                              position: 'absolute',
+                              bottom: '100%',
+                              left: '50%',
+                              transform: 'translateX(-50%)',
+                              background: '#333',
+                              color: '#fff',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              whiteSpace: 'nowrap',
+                              zIndex: 1000,
+                              display: 'none'
+                            }} className="incident-tooltip">
+                              {task.incident}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Bottom Panel - stays open */}
+        {selectedRooms.size > 0 && (
+          <div className="bottom-panel">
+            <div className="bottom-panel-header">
+              <span>{selectedRooms.size} chambre(s) sélectionnée(s)</span>
+              <Button variant="ghost" size="sm" onClick={clearSelection}>✕</Button>
+            </div>
+            
+            <div className="bottom-panel-content">
+              <div className="action-group">
+                <label>Assigner à :</label>
+                <div className="action-buttons" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {presentStaff.map(s => (
+                    <Button 
+                      key={s.id} 
+                      size="sm"
+                      onClick={() => handleAssign(s.id)}
+                      disabled={!canModifySelected}
+                    >
+                      {s.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="action-group">
+                <label>Type :</label>
+                <div className="action-buttons" style={{ display: 'flex', gap: 8 }}>
+                  <Button variant="secondary" size="sm" onClick={() => handleTypeChange('blanc')} disabled={!canChangeTypeForSelected}>
+                    Blanc
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => handleTypeChange('recouche')} disabled={!canChangeTypeForSelected}>
+                    Recouche
+                  </Button>
+                </div>
+              </div>
+
+              <div className="action-group">
+                <label>Statut :</label>
+                <div className="action-buttons" style={{ display: 'flex', gap: 8 }}>
+                  <Button variant="secondary" size="sm" onClick={handleFree} disabled={!canModifySelected} style={{ backgroundColor: '#FEF9C3' }}>
+                    🚪 Libérer
+                  </Button>
+                  <Button variant="default" size="sm" onClick={() => setShowFinishConfirm(true)} disabled={!canModifySelected} style={{ backgroundColor: '#16A34A' }}>
+                    ✅ Terminer
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="action-group">
+                <label>Late Checkout :</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select 
+                    value={lateCheckoutTime}
+                    onChange={(e) => setLateCheckoutTime(e.target.value)}
+                    className="filter-select"
+                    disabled={!canChangeLateCheckoutForSelected}
+                  >
+                    <option value="">--</option>
+                    <option value="12:00">12h</option>
+                    <option value="13:00">13h</option>
+                    <option value="14:00">14h</option>
+                  </select>
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={handleLateCheckout}
+                    disabled={!lateCheckoutTime || !canChangeLateCheckoutForSelected}
+                  >
+                    Appliquer
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="action-group">
+                <Button variant="destructive" size="sm" onClick={handleDelete} disabled={!canModifySelected}>
+                  Supprimer
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+        </div>
+        )}
+      </main>
+
+      {/* Team Panel */}
+      <Dialog open={showTeamPanel} onOpenChange={setShowTeamPanel}>
+        <DialogContent style={{ maxWidth: 500 }}>
+          <DialogHeader>
+            <DialogTitle>Gestion de l'équipe</DialogTitle>
+            <DialogDescription>Gérez les membres de l'équipe présents aujourd'hui</DialogDescription>
+          </DialogHeader>
+            
+            <div className="staff-list">
+              {!Array.isArray(staff) || staff.length === 0 ? (
+                <p style={{ color: '#6B7280', textAlign: 'center', padding: '20px' }}>
+                  Ajoutez un membre pour commencer
+                </p>
+              ) : (
+                staff.map(s => (
+                  <div key={s.id} className="staff-row">
+                    {confirmDeleteId === s.id ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 8 }}>
+                        <span>Supprimer <strong>{s.name}</strong> ?</span>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <Button 
+                            variant="secondary" 
+                            size="sm"
+                            onClick={() => setConfirmDeleteId(null)}
+                          >
+                            Annuler
+                          </Button>
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
+                            onClick={async () => {
+                              await deleteStaff(s.id);
+                              setConfirmDeleteId(null);
+                            }}
+                          >
+                            Confirmer
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <strong>{s.name}</strong>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <label className="toggle">
+                            <input 
+                              type="checkbox" 
+                              checked={s.presentToday}
+                              onChange={(e) => toggleStaffPresence(s.id, e.target.checked)}
+                            />
+                            <span>{s.presentToday ? 'Présente' : 'Absente'}</span>
+                          </label>
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
+                            onClick={() => setConfirmDeleteId(s.id)}
+                            title="Supprimer"
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            
+            {/* Add new staff */}
+            <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+              <input 
+                type="text"
+                placeholder="Nouveau membre..."
+                value={newStaffName}
+                onChange={(e) => {
+                  setNewStaffName(e.target.value);
+                  if (staffNameError) setStaffNameError(false);
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handleAddStaff()}
+                className="filter-select"
+                style={{ 
+                  flex: 1,
+                  borderColor: staffNameError ? '#DC2626' : undefined
+                }}
+              />
+              <Button size="sm" onClick={handleAddStaff}>
+                Ajouter
+              </Button>
+            </div>
+            
+            <Button variant="secondary" onClick={() => setShowTeamPanel(false)} style={{ marginTop: 16 }}>
+              Fermer
+            </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Modal */}
+      <Dialog open={showImportModal} onOpenChange={setShowImportModal}>
+        <DialogContent style={{ maxWidth: 600 }}>
+          <DialogHeader>
+            <DialogTitle>Importer depuis Medialog</DialogTitle>
+            <DialogDescription>Importez les chambres depuis un fichier Excel Medialog</DialogDescription>
+          </DialogHeader>
+            
+            <div className="import-section">
+              <input 
+                type="file" 
+                accept=".xlsx,.xlsm,.xls"
+                onChange={handleFileUpload}
+                disabled={isImporting}
+              />
+              {isImporting && <p>Import en cours...</p>}
+            </div>
+            
+            {importedTasks.length > 0 && (
+              <div className="import-preview">
+                <h3>{importedTasks.length} chambres détectées</h3>
+                <div className="import-stats">
+                  <span>Blanc: {importedTasks.filter(t => t.type === 'blanc').length}</span>
+                  <span>Recouche: {importedTasks.filter(t => t.type === 'recouche').length}</span>
+                  <span>🛏: {importedTasks.filter(t => t.linenChange).length}</span>
+                </div>
+                
+                <Button onClick={confirmImport}>
+                  Confirmer l'import
+                </Button>
+              </div>
+            )}
+            
+            <Button variant="secondary" onClick={() => setShowImportModal(false)}>
+              Annuler
+            </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Finish Confirm */}
+      <Dialog open={showFinishConfirm} onOpenChange={setShowFinishConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmer la fin</DialogTitle>
+          </DialogHeader>
+            <p style={{ color: '#DC2626', fontWeight: 600 }}>⚠️ Action irréversible</p>
+            <p>Marquer {selectedRooms.size} chambre(s) comme terminée(s) ?</p>
+            <p style={{ fontSize: 14, color: '#6B7280' }}>Cette action ne peut pas être annulée.</p>
+            
+            <DialogFooter>
+              <Button variant="default" onClick={handleFinishFromReception} style={{ backgroundColor: '#16A34A' }}>
+                ✅ Confirmer
+              </Button>
+              <Button variant="secondary" onClick={() => setShowFinishConfirm(false)}>
+                Annuler
+              </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Confirm */}
+      <Dialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Réinitialiser</DialogTitle>
+            <DialogDescription>Cette action réinitialise tous les statuts et assignations</DialogDescription>
+          </DialogHeader>
+            <p>Cette action va réinitialiser toutes les chambres (statuts et assignations).</p>
+            <p>Êtes-vous sûr ?</p>
+            
+            <DialogFooter>
+              <Button variant="destructive" onClick={handleResetAll} disabled={!canReset}>
+                Confirmer
+              </Button>
+              <Button variant="secondary" onClick={() => setShowResetConfirm(false)}>
+                Annuler
+              </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ============================================
+// Reports Components
+// ============================================
+
+function ReportsList({ reports, onSelect }) {
+  const { t, i18n } = useTranslation();
+  
+  const formatDate = (dateStr) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString(i18n.language === 'ro' ? 'ro-RO' : i18n.language === 'en' ? 'en-EN' : 'fr-FR', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+  
+  if (reports.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40, color: '#6B7280' }}>
+        <p>{t('noReports') || 'Aucun rapport'}</p>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="reports-list">
+      {reports.map(report => (
+        <div
+          key={report.id}
+          onClick={() => onSelect(report)}
+          style={{
+            padding: '16px',
+            borderBottom: '1px solid #E5E7EB',
+            cursor: 'pointer',
+            background: '#fff'
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            {formatDate(report.date)}
+          </div>
+          <div style={{ fontSize: 14, color: '#6B7280' }}>
+            {report.summary?.done || 0}/{report.summary?.total || 0} {t('done')} · {report.incidents?.length || 0} {t('incidents') || 'incident(s)'} · {report.summary?.postponed || 0} {t('postponed') || 'reportée(s)'}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReportDetail({ report, onBack }) {
+  const { t, i18n } = useTranslation();
+  
+  const formatDate = (dateStr) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString(i18n.language === 'ro' ? 'ro-RO' : i18n.language === 'en' ? 'en-EN' : 'fr-FR', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+  
+  const formatTime = (isoString) => {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    return date.toLocaleTimeString(i18n.language === 'ro' ? 'ro-RO' : i18n.language === 'en' ? 'en-EN' : 'fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+  
+  const handlePrint = () => {
+    window.print();
+  };
+  
+  if (!report) return null;
+  
+  return (
+    <div className="report-detail" style={{ padding: 16 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <Button variant="ghost" size="sm" onClick={onBack} style={{ marginBottom: 8 }}>
+            ← {t('cancel')}
+          </Button>
+          <h2 style={{ fontSize: 24, fontWeight: 700 }}>{formatDate(report.date)}</h2>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="outline" onClick={handlePrint}>
+            🖨️ {t('print') || 'Imprimer'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Section 1 - Résumé global */}
+      <div style={{ marginBottom: 24, background: '#F9FAFB', borderRadius: 12, padding: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{t('summary') || 'Résumé global'}</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#16A34A' }}>{report.summary?.done || 0}/{report.summary?.total || 0}</div>
+            <div style={{ fontSize: 14, color: '#6B7280' }}>{t('done') || 'Terminées'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#DC2626' }}>{report.summary?.dnd || 0}</div>
+            <div style={{ fontSize: 14, color: '#6B7280' }}>{t('dnd') || 'DND'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#F59E0B' }}>{report.summary?.postponed || 0}</div>
+            <div style={{ fontSize: 14, color: '#6B7280' }}>{t('postponed') || 'Reportées'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#6B7280' }}>{report.summary?.notDone || 0}</div>
+            <div style={{ fontSize: 14, color: '#6B7280' }}>{t('notDone') || 'Non faites'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{formatTime(report.summary?.firstStartedAt)}</div>
+            <div style={{ fontSize: 14, color: '#6B7280' }}>{t('firstStarted') || 'Première started'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{formatTime(report.summary?.lastCompletedAt)}</div>
+            <div style={{ fontSize: 14, color: '#6B7280' }}>{t('lastCompleted') || 'Dernière terminée'}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Section 2 - Par femme de chambre */}
+      <div style={{ marginBottom: 24 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{t('byStaff') || 'Par femme de chambre'}</h3>
+        <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead style={{ background: '#F9FAFB' }}>
+              <tr>
+                <th style={{ padding: 12, textAlign: 'left', fontWeight: 600 }}>{t('name') || 'Nom'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>{t('roomsDone') || 'Chambres'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>{t('blanc') || 'Blanc'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>{t('recouche') || 'Recouche'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600, color: '#F59E0B' }}>{t('postponed') || 'Reportées'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600, color: '#DC2626' }}>{t('dnd') || 'DND'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>{t('incidents') || 'Incidents'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.byStaff?.map((staff, i) => (
+                <tr key={i} style={{ borderTop: '1px solid #E5E7EB' }}>
+                  <td style={{ padding: 12, fontWeight: 500 }}>{staff.name}</td>
+                  <td style={{ padding: 12, textAlign: 'center' }}>{staff.done}</td>
+                  <td style={{ padding: 12, textAlign: 'center' }}>{staff.blanc}</td>
+                  <td style={{ padding: 12, textAlign: 'center' }}>{staff.recouche}</td>
+                  <td style={{ padding: 12, textAlign: 'center', color: staff.postponed > 0 ? '#F59E0B' : '#6B7280' }}>{staff.postponed || 0}</td>
+                  <td style={{ padding: 12, textAlign: 'center', color: staff.dnd > 0 ? '#DC2626' : '#6B7280' }}>{staff.dnd || 0}</td>
+                  <td style={{ padding: 12, textAlign: 'center', color: staff.incidents > 0 ? '#DC2626' : '#6B7280' }}>{staff.incidents}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Section 3 - Par chambre */}
+      <div style={{ marginBottom: 24 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{t('byRoom') || 'Par chambre'}</h3>
+        <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead style={{ background: '#F9FAFB' }}>
+              <tr>
+                <th style={{ padding: 10, textAlign: 'left', fontWeight: 600 }}>Ch.</th>
+                <th style={{ padding: 10, textAlign: 'left', fontWeight: 600 }}>Assignée à</th>
+                <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Type</th>
+                <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Statut</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.tasksSnapshot?.map((task) => {
+                const staffMember = report.byStaff?.find(s => s.name === task.assignedTo);
+                let statusLabel = task.status;
+                let statusColor = '#6B7280';
+                if (task.status === 'done') { statusLabel = 'Terminée'; statusColor = '#16A34A'; }
+                else if (task.status === 'in_progress') { statusLabel = 'En cours'; statusColor = '#F59E0B'; }
+                else if (task.status === 'dnd') { statusLabel = 'DND'; statusColor = '#DC2626'; }
+                else if (task.status === 'postponed') { statusLabel = 'Reportée'; statusColor = '#8B5CF6'; }
+                else if (task.status === 'freed') { statusLabel = 'Libérée'; statusColor = '#FCD34D'; }
+                else if (task.status === 'late_checkout') { statusLabel = 'Late'; statusColor = '#3B82F6'; }
+                else { statusLabel = 'À faire'; }
+                return (
+                  <tr key={task.roomId} style={{ borderTop: '1px solid #E5E7EB' }}>
+                    <td style={{ padding: 10, fontWeight: 600 }}>{task.roomNumber}</td>
+                    <td style={{ padding: 10 }}>{task.assignedTo || '-'}</td>
+                    <td style={{ padding: 10, textAlign: 'center' }}>{task.type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
+                    <td style={{ padding: 10, textAlign: 'center', color: statusColor, fontWeight: 500 }}>{statusLabel}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Section 4 - Incidents */}
+      {report.incidents?.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{t('incidentsList') || 'Incidents'} ({report.incidents.length})</h3>
+          <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+            {report.incidents.map((incident, i) => (
+              <div key={i} style={{ padding: 12, borderBottom: i < report.incidents.length - 1 ? '1px solid #E5E7EB' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <span style={{ fontWeight: 600, minWidth: 40 }}>{incident.roomNumber}</span>
+                  <span>{incident.text}</span>
+                </div>
+                <span style={{ color: '#6B7280', fontSize: 14 }}>{incident.assignedTo}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Section 4 - Chambres reportées */}
+      {report.postponed?.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{t('postponedRooms') || 'Chambres reportées'} ({report.postponed.length})</h3>
+          <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+            {report.postponed.map((room, i) => (
+              <div key={i} style={{ padding: 12, borderBottom: i < report.postponed.length - 1 ? '1px solid #E5E7EB' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <span style={{ fontWeight: 600, minWidth: 40 }}>{room.roomNumber}</span>
+                  <span>{room.type === 'recouche' ? '🛏️ Recouche' : '🧹 Blanc'}</span>
+                </div>
+                <span style={{ color: '#6B7280', fontSize: 14 }}>{room.assignedTo}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Section 5 - Chambres DND */}
+      {report.dnd?.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: '#DC2626' }}>{t('dnd')} ({report.dnd.length})</h3>
+          <div style={{ border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+            {report.dnd.map((room, i) => (
+              <div key={i} style={{ padding: 12, borderBottom: i < report.dnd.length - 1 ? '1px solid #E5E7EB' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <span style={{ fontWeight: 600, minWidth: 40 }}>{room.roomNumber}</span>
+                  <span>{room.type === 'recouche' ? '🛏️ Recouche' : '🧹 Blanc'}</span>
+                  {room.incident && <span style={{ color: '#DC2626', fontSize: 12 }}>({room.incident})</span>}
+                </div>
+                <span style={{ color: '#6B7280', fontSize: 14 }}>{room.assignedTo}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
