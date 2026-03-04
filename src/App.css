@@ -736,3 +736,52 @@ button {
   outline: none;
   background-color: #e5e7eb;
 }
+
+/* ============================================
+   Print Styles
+   ============================================ */
+
+@media print {
+  /* Hide everything by default */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Show only print elements */
+  .Print-only, .Print-only * {
+    visibility: visible;
+  }
+  
+  .Print-only {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  
+  /* Reset print pages */
+  .Print-page {
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+  
+  /* Hide non-print elements */
+  .app, .header, .main, .bottom-panel, button, 
+  .dialog-content, .modal, nav, footer, .no-print {
+    display: none !important;
+  }
+  
+  /* Reset text colors for print */
+  * {
+    color: black !important;
+    background: white !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  
+  /* Ensure proper font size */
+  body {
+    font-size: 12px !important;
+  }
+}

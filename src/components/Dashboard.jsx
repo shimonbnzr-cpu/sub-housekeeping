@@ -17,6 +17,7 @@ import {
   resetDailyPlanning,
   setLateCheckout,
   updateStaffPresence,
+  updateStaffShift,
   autoAssignTasks,
   resetAllTasks,
   ensureAllRoomsHaveTasks,
@@ -26,6 +27,7 @@ import {
   subscribeToReports,
   generateAndSaveReport
 } from '../services/firestore';
+import { handlePrint } from '../services/print';
 import { parseMedialogFile } from '../services/import';
 
 export default function Dashboard() {
@@ -38,6 +40,7 @@ export default function Dashboard() {
   const [showTeamPanel, setShowTeamPanel] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importedTasks, setImportedTasks] = useState([]);
+  const [importedFileDate, setImportedFileDate] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
@@ -365,13 +368,24 @@ export default function Dashboard() {
 
   // Import handlers
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
     
+    console.log('File selected:', file.name);
     setIsImporting(true);
     try {
-      const parsed = await parseMedialogFile(file);
-      setImportedTasks(parsed);
+      const result = await parseMedialogFile(file);
+      if (result && result.tasks) {
+        setImportedTasks(result.tasks || []);
+        setImportedFileDate(result.fileDate);
+        if (result.tasks.length === 0) {
+          alert('Aucune chambre détectée dans le fichier. Vérifiez le format.');
+        }
+      } else {
+        setImportedTasks([]);
+        setImportedFileDate(null);
+        alert('Erreur lors de l\'import: format inattendu');
+      }
     } catch (error) {
       console.error('Import error:', error);
       alert('Erreur lors de l\'import: ' + error.message);
@@ -382,11 +396,24 @@ export default function Dashboard() {
   const confirmImport = async () => {
     if (importedTasks.length === 0) return;
     
-    await resetDailyPlanning();
+    // Get all current room IDs
+    const currentRoomIds = new Set(tasks.map(t => t.roomId));
+    const importedRoomIds = new Set(importedTasks.map(t => t.roomId));
+    
+    // Find rooms not in import - mark them as done
+    const roomsToMarkDone = tasks.filter(t => !importedRoomIds.has(t.roomId));
+    
+    // Import the rooms from file
     await batchSetTasks(importedTasks);
+    
+    // Mark absent rooms as done
+    for (const room of roomsToMarkDone) {
+      await updateTaskStatus(room.roomId, 'done');
+    }
     
     setShowImportModal(false);
     setImportedTasks([]);
+    setImportedFileDate(null);
   };
 
   // Team management
@@ -485,6 +512,9 @@ export default function Dashboard() {
           <Button variant="secondary" size="sm" onClick={() => setShowImportModal(true)}>
             Importer
           </Button>
+          <Button variant="outline" size="sm" onClick={() => handlePrint(staff, tasks)}>
+            🖨️ Imprimer
+          </Button>
           <Button variant="outline" size="sm" onClick={async () => {
             if (confirm('Générer le rapport du jour ?')) {
               await generateAndSaveReport(tasks, staff);
@@ -535,7 +565,7 @@ export default function Dashboard() {
         {/* Reports Tab */}
         {activeTab === 'reports' && (
           selectedReport ? (
-            <ReportDetail report={selectedReport} onBack={() => setSelectedReport(null)} />
+            <ReportDetail report={selectedReport} onBack={() => setSelectedReport(null)} tasks={tasks} staff={staff} />
           ) : (
             <ReportsList reports={reports} onSelect={setSelectedReport} />
           )
@@ -554,8 +584,26 @@ export default function Dashboard() {
           </div>
           {staffStats.length > 0 && (
             <div className="staff-progress" style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13, color: '#6B7280' }}>
-              {staffStats.map(s => (
-                <span key={s.id}>{s.name} {s.done}/{s.assigned}</span>
+              {staffStats.filter(s => s.presentToday).map(s => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F3F4F6', padding: '6px 12px', borderRadius: 8 }}>
+                  <span style={{ fontWeight: 600 }}>{s.name}</span>
+                  <span>{s.done}/{s.assigned}</span>
+                  <input 
+                    type="time"
+                    value={s.shift_start || ''}
+                    onChange={(e) => updateStaffShift(s.id, e.target.value, s.shift_end)}
+                    style={{ padding: '2px 4px', fontSize: 11, borderRadius: 4, border: '1px solid #D1D5DB', width: 70 }}
+                    title="Début"
+                  />
+                  <span>—</span>
+                  <input 
+                    type="time"
+                    value={s.shift_end || ''}
+                    onChange={(e) => updateStaffShift(s.id, s.shift_start, e.target.value)}
+                    style={{ padding: '2px 4px', fontSize: 11, borderRadius: 4, border: '1px solid #D1D5DB', width: 70 }}
+                    title="Fin"
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -796,8 +844,13 @@ export default function Dashboard() {
                       <>
                         <div>
                           <strong>{s.name}</strong>
+                          {s.shift_start && s.shift_end && (
+                            <span style={{ marginLeft: 8, fontSize: 12, color: '#6B7280' }}>
+                              🕐 {s.shift_start} — {s.shift_end}
+                            </span>
+                          )}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <label className="toggle" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                             <input 
                               type="checkbox" 
@@ -806,6 +859,21 @@ export default function Dashboard() {
                             />
                             <span>{s.presentToday ? 'Présente' : 'Absente'}</span>
                           </label>
+                          <input 
+                            type="time"
+                            value={s.shift_start || ''}
+                            onChange={(e) => updateStaffShift(s.id, e.target.value, s.shift_end)}
+                            style={{ padding: '4px 8px', fontSize: 12, borderRadius: 4, border: '1px solid #D1D5DB' }}
+                            title="Heure de début"
+                          />
+                          <span style={{ fontSize: 12 }}>—</span>
+                          <input 
+                            type="time"
+                            value={s.shift_end || ''}
+                            onChange={(e) => updateStaffShift(s.id, s.shift_start, e.target.value)}
+                            style={{ padding: '4px 8px', fontSize: 12, borderRadius: 4, border: '1px solid #D1D5DB' }}
+                            title="Heure de fin"
+                          />
                           <button 
                             onClick={() => setConfirmDeleteId(s.id)}
                             title="Supprimer"
@@ -871,25 +939,65 @@ export default function Dashboard() {
           </DialogHeader>
             
             <div className="import-section">
+              <label htmlFor="file-upload" style={{ 
+                display: 'block', 
+                padding: '24px', 
+                border: '2px dashed #D1D5DB', 
+                borderRadius: '8px', 
+                textAlign: 'center', 
+                cursor: 'pointer',
+                marginBottom: 16
+              }}>
+                <p style={{ marginBottom: 8 }}>Cliquez pour sélectionner un fichier</p>
+                <p style={{ fontSize: 12, color: '#6B7280' }}>.xlsx, .xlsm, .xls</p>
+              </label>
               <input 
+                id="file-upload"
                 type="file" 
                 accept=".xlsx,.xlsm,.xls"
                 onChange={handleFileUpload}
                 disabled={isImporting}
+                style={{ display: 'none' }}
               />
               {isImporting && <p>Import en cours...</p>}
             </div>
             
             {importedTasks.length > 0 && (
               <div className="import-preview">
-                <h3>{importedTasks.length} chambres détectées</h3>
-                <div className="import-stats">
-                  <span>Blanc: {importedTasks.filter(t => t.type === 'blanc').length}</span>
-                  <span>Recouche: {importedTasks.filter(t => t.type === 'recouche').length}</span>
-                  <span>🛏: {importedTasks.filter(t => t.linenChange).length}</span>
+                <h3 style={{ marginBottom: 12 }}>{importedTasks.length} chambres détectées</h3>
+                <div className="import-stats" style={{ display: 'flex', gap: 16, marginBottom: 16, padding: '12px', background: '#F9FAFB', borderRadius: 8 }}>
+                  <span>🏠 Blanc: <strong>{importedTasks.filter(t => t.type === 'blanc').length}</strong></span>
+                  <span>🛏️ Recouche: <strong>{importedTasks.filter(t => t.type === 'recouche').length}</strong></span>
+                  <span>🧺 Linges: <strong>{importedTasks.filter(t => t.linenChange).length}</strong></span>
                 </div>
                 
-                <Button onClick={confirmImport}>
+                {/* Date warning */}
+                {importedFileDate && (() => {
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  const fileDate = new Date(importedFileDate);
+                  fileDate.setHours(0, 0, 0, 0);
+                  const diffDays = Math.abs(Math.floor((today - fileDate) / (1000 * 60 * 60 * 24)));
+                  
+                  if (diffDays > 1) {
+                    const dateStr = fileDate.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                    return (
+                      <div style={{ 
+                        marginBottom: 16, 
+                        padding: '12px', 
+                        background: '#FEF3C7', 
+                        borderRadius: 8,
+                        border: '1px solid #F59E0B',
+                        color: '#92400E'
+                      }}>
+                        ⚠️ La date de cet export est le {dateStr}. Êtes-vous sûr d'importer le bon fichier ?
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                
+                <Button onClick={confirmImport} style={{ width: '100%' }}>
                   Confirmer l'import
                 </Button>
               </div>
@@ -996,7 +1104,7 @@ function ReportsList({ reports, onSelect }) {
   );
 }
 
-function ReportDetail({ report, onBack }) {
+function ReportDetail({ report, onBack, tasks, staff }) {
   const { t, i18n } = useTranslation();
   
   const formatDate = (dateStr) => {
@@ -1086,6 +1194,8 @@ function ReportDetail({ report, onBack }) {
                 <th style={{ padding: 12, textAlign: 'center', fontWeight: 600, color: '#F59E0B' }}>{t('postponed') || 'Reportées'}</th>
                 <th style={{ padding: 12, textAlign: 'center', fontWeight: 600, color: '#DC2626' }}>{t('dnd') || 'DND'}</th>
                 <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>{t('incidents') || 'Incidents'}</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>Début</th>
+                <th style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>Fin</th>
               </tr>
             </thead>
             <tbody>
@@ -1098,6 +1208,8 @@ function ReportDetail({ report, onBack }) {
                   <td style={{ padding: 12, textAlign: 'center', color: staff.postponed > 0 ? '#F59E0B' : '#6B7280' }}>{staff.postponed || 0}</td>
                   <td style={{ padding: 12, textAlign: 'center', color: staff.dnd > 0 ? '#DC2626' : '#6B7280' }}>{staff.dnd || 0}</td>
                   <td style={{ padding: 12, textAlign: 'center', color: staff.incidents > 0 ? '#DC2626' : '#6B7280' }}>{staff.incidents}</td>
+                  <td style={{ padding: 12, textAlign: 'center' }}>{staff.shift_start || '-'}</td>
+                  <td style={{ padding: 12, textAlign: 'center' }}>{staff.shift_end || '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -1117,6 +1229,8 @@ function ReportDetail({ report, onBack }) {
                 <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Type</th>
                 <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Statut</th>
                 <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Incident</th>
+                <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Début</th>
+                <th style={{ padding: 10, textAlign: 'center', fontWeight: 600 }}>Fin</th>
               </tr>
             </thead>
             <tbody>
@@ -1143,6 +1257,18 @@ function ReportDetail({ report, onBack }) {
                     <td style={{ padding: 10, textAlign: 'center', color: statusColor, fontWeight: 500 }}>{statusLabel}</td>
                     <td style={{ padding: 10, textAlign: 'center', color: task.incident ? '#DC2626' : '#6B7280' }}>
                       {task.incident || '-'}
+                    </td>
+                    <td style={{ padding: 10, textAlign: 'center' }}>
+                      {task.cleaning_startedAt ? (() => {
+                        const d = task.cleaning_startedAt?.toDate ? task.cleaning_startedAt.toDate() : new Date(task.cleaning_startedAt);
+                        return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                      })() : '-'}
+                    </td>
+                    <td style={{ padding: 10, textAlign: 'center' }}>
+                      {task.cleaning_completedAt ? (() => {
+                        const d = task.cleaning_completedAt?.toDate ? task.cleaning_completedAt.toDate() : new Date(task.cleaning_completedAt);
+                        return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                      })() : '-'}
                     </td>
                   </tr>
                 );
@@ -1205,6 +1331,82 @@ function ReportDetail({ report, onBack }) {
           </div>
         </div>
       )}
+
+      {/* Print Layout - Only visible when printing */}
+      <div className="print-only" style={{ display: 'none' }}>
+        <PrintLayout tasks={tasks} staff={staff} />
+      </div>
+    </div>
+  );
+}
+
+// Print Layout Component
+function PrintLayout({ tasks, staff }) {
+  const today = new Date().toLocaleDateString('fr-FR', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  // Get present staff with tasks
+  const presentStaff = staff.filter(s => s.presentToday);
+  
+  return (
+    <div className="print-layout">
+      {presentStaff.map(s => {
+        const staffTasks = tasks
+          .filter(t => t.assignedTo === s.id && t.status !== 'done')
+          .sort((a, b) => {
+            const numA = parseInt(a.roomNumber.toString().replace(/-.*/, '')) || 0;
+            const numB = parseInt(b.roomNumber.toString().replace(/-.*/, '')) || 0;
+            return numA - numB;
+          });
+        
+        if (staffTasks.length === 0) return null;
+        
+        return (
+          <div key={s.id} className="print-page" style={{ pageBreakAfter: 'always' }}>
+            <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif', fontSize: '12px' }}>
+              {/* Header */}
+              <div style={{ marginBottom: '20px', borderBottom: '2px solid black', paddingBottom: '10px' }}>
+                <h1 style={{ fontSize: '18px', margin: 0 }}>Hôtel SUB — Gouvernante</h1>
+                <p style={{ margin: '5px 0' }}>{today}</p>
+                <p style={{ margin: '5px 0', fontWeight: 'bold' }}>{s.name}</p>
+              </div>
+              
+              {/* Room list */}
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid black' }}>
+                    <th style={{ textAlign: 'left', padding: '8px 4px' }}>Ch.</th>
+                    <th style={{ textAlign: 'left', padding: '8px 4px' }}>Type</th>
+                    <th style={{ textAlign: 'center', padding: '8px 4px' }}>Linge</th>
+                    <th style={{ textAlign: 'center', padding: '8px 4px' }}>Late</th>
+                    <th style={{ textAlign: 'left', padding: '8px 4px' }}>Heure</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffTasks.map(task => (
+                    <tr key={task.roomId} style={{ borderBottom: '1px solid #ccc' }}>
+                      <td style={{ padding: '8px 4px', fontWeight: 'bold' }}>{task.roomNumber}</td>
+                      <td style={{ padding: '8px 4px' }}>{task.type === 'recouche' ? 'Recouche' : 'À blanc'}</td>
+                      <td style={{ textAlign: 'center', padding: '8px 4px' }}>{task.linenChange ? '✓' : ''}</td>
+                      <td style={{ textAlign: 'center', padding: '8px 4px' }}>{task.lateCheckoutTime || ''}</td>
+                      <td style={{ padding: '8px 4px', borderBottom: '1px dotted #999', minHeight: '20px' }}></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              
+              {/* Footer */}
+              <div style={{ marginTop: '20px', borderTop: '1px solid black', paddingTop: '10px' }}>
+                <strong>Total: {staffTasks.length} chambre(s)</strong>
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

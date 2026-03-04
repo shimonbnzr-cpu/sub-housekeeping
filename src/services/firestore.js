@@ -81,10 +81,10 @@ export const updateTaskStatus = async (roomId, status, additionalData = {}) => {
   };
   
   // Add timestamps based on status
-  if (status === 'in_progress' && !additionalData.startedAt) {
-    updates.startedAt = serverTimestamp();
-  } else if (status === 'done' && !additionalData.completedAt) {
-    updates.completedAt = serverTimestamp();
+  if (status === 'in_progress' && !additionalData.cleaning_startedAt) {
+    updates.cleaning_startedAt = serverTimestamp();
+  } else if (status === 'done' && !additionalData.cleaning_completedAt) {
+    updates.cleaning_completedAt = serverTimestamp();
   }
   
   await updateDoc(taskRef, { ...updates, ...additionalData });
@@ -392,6 +392,16 @@ export const updateStaffPresence = async (staffId, presentToday) => {
   });
 };
 
+// Update staff shift times
+export const updateStaffShift = async (staffId, shiftStart, shiftEnd) => {
+  const staffRef = doc(getStaffCollection(), staffId);
+  await updateDoc(staffRef, {
+    shift_start: shiftStart || null,
+    shift_end: shiftEnd || null,
+    updatedAt: serverTimestamp()
+  });
+};
+
 // Create or update staff member
 export const setStaff = async (staffData) => {
   const staffRef = doc(getStaffCollection(), staffData.id);
@@ -506,12 +516,21 @@ export const generateAndSaveReport = async (tasks, staff) => {
   const startedTasks = tasks.filter(t => t.cleaning_startedAt);
   const completedTasks = tasks.filter(t => t.cleaning_completedAt);
   
+  // Helper to convert Firestore timestamp to Date
+  const toDate = (val) => {
+    if (!val) return null;
+    if (val.toDate) return val.toDate(); // Firestore Timestamp
+    if (val instanceof Date) return val;
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  };
+  
   const firstStartedAt = startedTasks.length > 0 
-    ? new Date(Math.min(...startedTasks.map(t => new Date(t.cleaning_startedAt).getTime())))
+    ? new Date(Math.min(...startedTasks.map(t => toDate(t.cleaning_startedAt)?.getTime() || Infinity).filter(v => v !== Infinity && v !== null)))
     : null;
     
   const lastCompletedAt = completedTasks.length > 0 
-    ? new Date(Math.max(...completedTasks.map(t => new Date(t.cleaning_completedAt).getTime())))
+    ? new Date(Math.max(...completedTasks.map(t => toDate(t.cleaning_completedAt)?.getTime() || 0).filter(v => v !== null)))
     : null;
   
   // By staff
@@ -530,7 +549,9 @@ export const generateAndSaveReport = async (tasks, staff) => {
       recouche: staffRecouche.length,
       incidents: staffIncidents.length,
       postponed: tasks.filter(t => t.assignedTo === s.id && t.status === 'postponed').length,
-      dnd: tasks.filter(t => t.assignedTo === s.id && t.status === 'dnd').length
+      dnd: tasks.filter(t => t.assignedTo === s.id && t.status === 'dnd').length,
+      shift_start: s.shift_start || null,
+      shift_end: s.shift_end || null
     };
   });
   
