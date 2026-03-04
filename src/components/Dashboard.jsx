@@ -27,7 +27,7 @@ import {
   subscribeToReports,
   generateAndSaveReport
 } from '../services/firestore';
-import { handlePrint } from '../services/print';
+import { handlePrint, printSheets } from '../services/print';
 import { parseMedialogFile } from '../services/import';
 
 export default function Dashboard() {
@@ -1126,8 +1126,8 @@ function ReportDetail({ report, onBack, tasks, staff }) {
     });
   };
   
-  const handlePrint = () => {
-    window.print();
+  const handleReportPrint = () => {
+    printSheets(staff, tasks);
   };
   
   if (!report) return null;
@@ -1143,7 +1143,7 @@ function ReportDetail({ report, onBack, tasks, staff }) {
           <h2 style={{ fontSize: 24, fontWeight: 700 }}>{formatDate(report.date)}</h2>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="outline" onClick={handlePrint}>
+          <Button variant="outline" onClick={handleReportPrint}>
             🖨️ {t('print') || 'Imprimer'}
           </Button>
         </div>

@@ -32,7 +32,7 @@ const printStyles = `
 `;
 
 // Generate print HTML
-const printSheets = (staffList, tasks) => {
+export const printSheets = (staffList, tasks) => {
   // Filter present staff
   const presentStaff = staffList.filter(s => s.presentToday);
   
