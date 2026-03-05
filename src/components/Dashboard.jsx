@@ -16,6 +16,7 @@ import {
   batchSetTasks,
   resetDailyPlanning,
   setLateCheckout,
+  clearLateCheckout,
   updateStaffPresence,
   updateStaffShift,
   autoAssignTasks,
@@ -33,6 +34,8 @@ import {
   cancelDND,
   postponeTask,
   cancelPostpone,
+  markAsFreed,
+  clearFreed,
   getTaskDisplayStatus,
   canModifyTask
 } from '../services/firestore';
@@ -244,6 +247,7 @@ export default function Dashboard() {
     if (!task) return true;
     const status = task.cleaning_status || 'todo';
     const skipReason = task.cleaning_skip_reason || null;
+    // Can't change if in_progress, done, dnd, or postponed (but freed is OK - will clear freed)
     if (status === 'in_progress' || status === 'done' || skipReason === 'dnd' || skipReason === 'postponed') return false;
     return true;
   };
@@ -313,8 +317,9 @@ export default function Dashboard() {
     for (const roomId of selectedRooms) {
       if (!canChangeLateCheckout(roomId)) continue;
       await ensureTaskExists(roomId);
-      // Just set late checkout time, don't change status
+      // Set late checkout and clear freed (they are mutually exclusive)
       await setLateCheckout(roomId, lateCheckoutTime);
+      await clearFreed(roomId);
     }
     setLateCheckoutTime('');
   };
@@ -345,27 +350,8 @@ export default function Dashboard() {
     
     for (const roomId of selectedRooms) {
       if (!canChangeAssignment(roomId)) continue;
-      const room = ROOMS.find(r => r.id === roomId);
-      const task = getTaskForRoom(room);
-      if (!task) {
-        await setTask({
-          roomId: room.id,
-          roomNumber: room.number,
-          floor: room.floor,
-          cleaning_type: 'blanc',
-          cleaning_status: 'todo',
-          cleaning_assignedTo: null
-        });
-      } else {
-        await setTask({
-          ...task,
-          cleaning_status: 'todo',
-          cleaning_assignedTo: null,
-          roomId: room.id,
-          roomNumber: room.number,
-          floor: room.floor
-        });
-      }
+      await ensureTaskExists(roomId);
+      await markAsFreed(roomId);
     }
     clearSelection();
   };
@@ -699,6 +685,7 @@ export default function Dashboard() {
                       )}
                       <div className="icons">
                         {task?.cleaning_lateCheckoutTime && <span title={`Late checkout: ${task.cleaning_lateCheckoutTime}`}>🕐</span>}
+                        {task?.cleaning_freed && <span title="Libérée">🚪</span>}
                         {task?.cleaning_linenChange && <span title="Draps">🛏</span>}
                         {displayStatus === 'dnd' && <span title="Ne pas déranger">🚫</span>}
                         {task?.cleaning_incident && task.cleaning_incident.length > 0 && (

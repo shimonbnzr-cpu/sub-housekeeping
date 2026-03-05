@@ -46,6 +46,7 @@ export const migrateTasksSchema = async () => {
     // Map old status to new schema
     let cleaning_status = 'todo';
     let cleaning_skip_reason = null;
+    let cleaning_freed = false;
     
     switch (task.status) {
       case 'dnd':
@@ -67,6 +68,7 @@ export const migrateTasksSchema = async () => {
       case 'freed':
         cleaning_status = 'todo';
         cleaning_skip_reason = null;
+        cleaning_freed = true;
         break;
       case 'in_progress':
         cleaning_status = 'in_progress';
@@ -86,6 +88,7 @@ export const migrateTasksSchema = async () => {
     const updates = {
       cleaning_status,
       cleaning_skip_reason,
+      cleaning_freed,
       cleaning_assignedTo: task.assignedTo || null,
       cleaning_type: task.type || 'blanc',
       cleaning_linenChange: task.linenChange || false,
@@ -176,6 +179,7 @@ export const batchSetTasks = async (tasksData) => {
       floor: taskData.floor,
       cleaning_status: 'todo',
       cleaning_skip_reason: null,
+      cleaning_freed: false,
       cleaning_assignedTo: null,
       cleaning_type: taskData.type || 'blanc',
       cleaning_linenChange: taskData.linenChange || false,
@@ -295,6 +299,29 @@ export const clearLateCheckout = async (roomId) => {
   });
 };
 
+// Mark room as freed (guest left, room needs cleaning)
+export const markAsFreed = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_freed: true,
+    cleaning_assignedTo: null, // Unassign since it's now freed
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Clear freed status
+export const clearFreed = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_freed: false,
+    updatedAt: serverTimestamp()
+  });
+};
+
 // ============================================
 // LEGACY FUNCTIONS (for backward compatibility during migration)
 // ============================================
@@ -400,7 +427,7 @@ export const autoAssignTasks = async (tasks, staff) => {
     const status = task?.cleaning_status || 'todo';
     const skipReason = task?.cleaning_skip_reason || null;
     
-    if (task && status !== 'done' && status !== 'in_progress' && skipReason === null) {
+    if (task && status !== 'done' && status !== 'in_progress' && skipReason === null && !task.cleaning_freed) {
       if (room.type === 'dorm') {
         // Group dorm beds under parent
         const parentId = room.number.split('-')[0];
@@ -647,6 +674,7 @@ export const ensureAllRoomsHaveTasks = async () => {
         floor: room.floor,
         cleaning_status: 'todo',
         cleaning_skip_reason: null,
+        cleaning_freed: false,
         cleaning_assignedTo: null,
         cleaning_type: 'blanc',
         cleaning_linenChange: false,
@@ -892,27 +920,29 @@ export const generateAndSaveReport = async (tasks, staff) => {
 // HELPER FUNCTIONS FOR COMPONENTS
 // ============================================
 
-// Get display status for a task (combines cleaning_status and cleaning_skip_reason)
+// Get display status for a task (combines cleaning_status, cleaning_skip_reason, cleaning_freed)
 export const getTaskDisplayStatus = (task) => {
   if (!task) return 'todo';
   
   const status = task.cleaning_status || 'todo';
   const skipReason = task.cleaning_skip_reason || null;
+  const freed = task.cleaning_freed || false;
   
   if (status === 'done') return 'done';
   if (status === 'in_progress') return 'in_progress';
   if (skipReason === 'dnd') return 'dnd';
   if (skipReason === 'postponed') return 'postponed';
+  if (freed) return 'freed';
   if (task.cleaning_lateCheckoutTime) return 'late_checkout';
   if (status === 'todo') return 'todo';
   
   return 'todo';
 };
 
-// Check if task is active (not done, not skipped)
+// Check if task is active (not done, not skipped, not freed)
 export const isTaskActive = (task) => {
   if (!task) return false;
-  return task.cleaning_status !== 'done' && task.cleaning_skip_reason === null;
+  return task.cleaning_status !== 'done' && task.cleaning_skip_reason === null && task.cleaning_freed !== true;
 };
 
 // Check if task can be modified
