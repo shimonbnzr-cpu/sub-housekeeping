@@ -317,9 +317,8 @@ export default function Dashboard() {
     for (const roomId of selectedRooms) {
       if (!canChangeLateCheckout(roomId)) continue;
       await ensureTaskExists(roomId);
-      // Set late checkout and clear freed (they are mutually exclusive)
+      // Set late checkout (can coexist with freed)
       await setLateCheckout(roomId, lateCheckoutTime);
-      await clearFreed(roomId);
     }
     setLateCheckoutTime('');
   };
@@ -351,7 +350,9 @@ export default function Dashboard() {
     for (const roomId of selectedRooms) {
       if (!canChangeAssignment(roomId)) continue;
       await ensureTaskExists(roomId);
+      // Set freed and clear late checkout (they are mutually exclusive)
       await markAsFreed(roomId);
+      await clearLateCheckout(roomId);
     }
     clearSelection();
   };

@@ -306,7 +306,6 @@ export const markAsFreed = async (roomId) => {
   
   await updateDoc(taskRef, {
     cleaning_freed: true,
-    cleaning_assignedTo: null, // Unassign since it's now freed
     updatedAt: serverTimestamp()
   });
 };

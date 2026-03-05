@@ -362,7 +362,7 @@ export default function StaffView() {
               <div className="task-icons">
                 {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
                 {task.cleaning_linenChange && <span>🛏</span>}
-                {task.cleaning_lateCheckoutTime && <span>🚪 {t('freed')}</span>}
+                {!task.cleaning_lateCheckoutTime && task.cleaning_freed && <span>🚪 {t('freed')}</span>}
               </div>
               
               {task.cleaning_incident && (
