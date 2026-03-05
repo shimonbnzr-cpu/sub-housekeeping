@@ -27,7 +27,7 @@ import {
   subscribeToReports,
   generateAndSaveReport
 } from '../services/firestore';
-import { handlePrint, printSheets } from '../services/print';
+import { handlePrint, printSheets, printReport } from '../services/print';
 import { parseMedialogFile } from '../services/import';
 
 export default function Dashboard() {
@@ -844,11 +844,6 @@ export default function Dashboard() {
                       <>
                         <div>
                           <strong>{s.name}</strong>
-                          {s.shift_start && s.shift_end && (
-                            <span style={{ marginLeft: 8, fontSize: 12, color: '#6B7280' }}>
-                              🕐 {s.shift_start} — {s.shift_end}
-                            </span>
-                          )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <label className="toggle" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -859,21 +854,6 @@ export default function Dashboard() {
                             />
                             <span>{s.presentToday ? 'Présente' : 'Absente'}</span>
                           </label>
-                          <input 
-                            type="time"
-                            value={s.shift_start || ''}
-                            onChange={(e) => updateStaffShift(s.id, e.target.value, s.shift_end)}
-                            style={{ padding: '4px 8px', fontSize: 12, borderRadius: 4, border: '1px solid #D1D5DB' }}
-                            title="Heure de début"
-                          />
-                          <span style={{ fontSize: 12 }}>—</span>
-                          <input 
-                            type="time"
-                            value={s.shift_end || ''}
-                            onChange={(e) => updateStaffShift(s.id, s.shift_start, e.target.value)}
-                            style={{ padding: '4px 8px', fontSize: 12, borderRadius: 4, border: '1px solid #D1D5DB' }}
-                            title="Heure de fin"
-                          />
                           <button 
                             onClick={() => setConfirmDeleteId(s.id)}
                             title="Supprimer"
@@ -1127,7 +1107,7 @@ function ReportDetail({ report, onBack, tasks, staff }) {
   };
   
   const handleReportPrint = () => {
-    printSheets(staff, tasks);
+    printReport(report);
   };
   
   if (!report) return null;

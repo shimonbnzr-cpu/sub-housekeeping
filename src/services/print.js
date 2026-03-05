@@ -113,3 +113,162 @@ export const handlePrint = (staffList, tasks) => {
     container.innerHTML = '';
   }, 100);
 };
+
+// Print Report function
+export const printReport = (report) => {
+  const formatTime = (ts) => {
+    if (!ts) return '-';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatDate = (d) => {
+    if (!d) return '-';
+    const date = d.toDate ? d.toDate() : new Date(d);
+    return date.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  };
+
+  const sortedTasks = (report.tasksSnapshot || []).sort((a, b) => {
+    const numA = parseInt(a.roomNumber?.toString().replace(/-.*/, '') || '0');
+    const numB = parseInt(b.roomNumber?.toString().replace(/-.*/, '') || '0');
+    return numA - numB;
+  });
+
+  const html = `
+    <div class="sheet">
+      <div class="sheet-header">
+        <h1>Hôtel SUB — Rapport journalier</h1>
+        <h2>${formatDate(report.date)}</h2>
+      </div>
+
+      <!-- Résumé -->
+      <div style="margin-bottom: 20px;">
+        <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Résumé</h3>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 12px;">
+          <div><strong>Terminées:</strong> ${report.summary?.done || 0}/${report.summary?.total || 0}</div>
+          <div><strong>DND:</strong> ${report.summary?.dnd || 0}</div>
+          <div><strong>Reportées:</strong> ${report.summary?.postponed || 0}</div>
+          <div><strong>Non faites:</strong> ${report.summary?.notDone || 0}</div>
+          <div><strong>Première started:</strong> ${formatTime(report.summary?.firstStartedAt)}</div>
+          <div><strong>Dernière terminée:</strong> ${formatTime(report.summary?.lastCompletedAt)}</div>
+        </div>
+      </div>
+
+      <!-- Par femme de chambre -->
+      <div style="margin-bottom: 20px;">
+        <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Par femme de chambre</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Ch.</th>
+              <th>Blanc</th>
+              <th>Recouche</th>
+              <th>Rep.</th>
+              <th>DND</th>
+              <th>Inc.</th>
+              <th>Début</th>
+              <th>Fin</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(report.byStaff || []).map(s => `
+              <tr>
+                <td>${s.name}</td>
+                <td>${s.done || 0}</td>
+                <td>${s.blanc || 0}</td>
+                <td>${s.recouche || 0}</td>
+                <td>${s.postponed || 0}</td>
+                <td>${s.dnd || 0}</td>
+                <td>${s.incidents || 0}</td>
+                <td>${s.shift_start || '-'}</td>
+                <td>${s.shift_end || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Incidents -->
+      ${(report.incidents || []).length > 0 ? `
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Incidents (${report.incidents.length})</h3>
+          <ul style="font-size: 12px;">
+            ${report.incidents.map(i => `<li>${i.roomNumber}: ${i.description || 'Problème'}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+
+      <!-- Chambres reportées -->
+      ${(report.postponedRooms || []).length > 0 ? `
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Chambres reportées (${report.postponedRooms.length})</h3>
+          <p style="font-size: 12px;">${report.postponedRooms.map(r => r.roomNumber).join(', ')}</p>
+        </div>
+      ` : ''}
+
+      <!-- Détail par chambre -->
+      <div>
+        <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Détail par chambre</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Ch.</th>
+              <th>Assignée</th>
+              <th>Type</th>
+              <th>Statut</th>
+              <th>Début</th>
+              <th>Fin</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedTasks.map(t => `
+              <tr>
+                <td><strong>${t.roomNumber}</strong></td>
+                <td>${t.assignedTo || '-'}</td>
+                <td>${t.type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
+                <td>${t.status === 'done' ? 'Terminée' : 
+                t.status === 'in_progress' ? 'En cours' : 
+                t.status === 'todo' ? 'À faire' : 
+                t.status === 'dnd' ? 'DND' : 
+                t.status === 'postponed' ? 'Reportée' : 
+                t.status === 'freed' ? 'Libérée' : 
+                t.status === 'late_checkout' ? 'Late checkout' : 
+                t.status}</td>
+                <td>${t.cleaning_startedAt ? formatTime(t.cleaning_startedAt) : '-'}</td>
+                <td>${t.cleaning_completedAt ? formatTime(t.cleaning_completedAt) : '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  // Inject print styles
+  let styleEl = document.getElementById('print-styles');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'print-styles';
+    document.head.appendChild(styleEl);
+  }
+  styleEl.innerHTML = printStyles;
+
+  // Inject print content
+  let container = document.getElementById('print-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'print-container';
+    document.body.appendChild(container);
+  }
+  container.innerHTML = html;
+
+  // Trigger print
+  window.print();
+
+  // Clean up after print
+  setTimeout(() => {
+    styleEl?.remove();
+    container.innerHTML = '';
+  }, 100);
+};
