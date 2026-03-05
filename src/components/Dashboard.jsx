@@ -25,7 +25,16 @@ import {
   setStaff as saveStaffToFirestore,
   deleteStaff,
   subscribeToReports,
-  generateAndSaveReport
+  generateAndSaveReport,
+  migrateTasksSchema,
+  startTask,
+  finishTask,
+  markAsDND,
+  cancelDND,
+  postponeTask,
+  cancelPostpone,
+  getTaskDisplayStatus,
+  canModifyTask
 } from '../services/firestore';
 import { handlePrint, printSheets, printReport } from '../services/print';
 import { parseMedialogFile } from '../services/import';
@@ -75,6 +84,9 @@ export default function Dashboard() {
       // Ensure all rooms have tasks (create if missing)
       await ensureAllRoomsHaveTasks();
       
+      // Run migration if needed (one-time)
+      await migrateTasksSchema();
+      
       // Subscribe to staff
       unsubStaff = subscribeToStaff((staffList) => {
         if (staffList && Array.isArray(staffList)) {
@@ -109,27 +121,27 @@ export default function Dashboard() {
     return tasks.find(t => t.roomId === room.id) || null;
   };
 
-  // Computed stats
+  // Computed stats (new schema)
   const totalRooms = ROOMS.length;
-  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const doneCount = tasks.filter(t => t.cleaning_status === 'done').length;
   const progress = totalRooms > 0 ? Math.round((doneCount / totalRooms) * 100) : 0;
 
-  // Stats per staff member
+  // Stats per staff member (new schema)
   const staffStats = Array.isArray(staff) ? staff.map(s => {
-    const assigned = tasks.filter(t => t.assignedTo === s.id).length;
-    const done = tasks.filter(t => t.assignedTo === s.id && t.status === 'done').length;
+    const assigned = tasks.filter(t => t.cleaning_assignedTo === s.id).length;
+    const done = tasks.filter(t => t.cleaning_assignedTo === s.id && t.cleaning_status === 'done').length;
     return { ...s, assigned, done };
   }).filter(s => s.presentToday) : [];
 
-  // Filter rooms
+  // Filter rooms (new schema)
   const filteredRooms = ROOMS.filter(room => {
     const task = getTaskForRoom(room);
     
     if (filterStaff !== 'all') {
-      if (task?.assignedTo !== filterStaff) {
+      if (task?.cleaning_assignedTo !== filterStaff) {
         return false;
       }
-      if (!task?.assignedTo) return false;
+      if (!task?.cleaning_assignedTo) return false;
     }
     return true;
   });
@@ -206,12 +218,14 @@ export default function Dashboard() {
     setSelectedRooms(new Set());
   };
 
-  // Check if can change assignment (only if todo)
+  // Check if can change assignment (only if not in_progress or done)
   const canChangeAssignment = (roomId) => {
     const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
     if (!task) return true;
+    const status = task.cleaning_status || 'todo';
+    const skipReason = task.cleaning_skip_reason || null;
     // Can't change if in_progress, done, dnd, or postponed
-    if (task.status === 'in_progress' || task.status === 'done' || task.status === 'dnd' || task.status === 'postponed') return false;
+    if (status === 'in_progress' || status === 'done' || skipReason === 'dnd' || skipReason === 'postponed') return false;
     return true;
   };
 
@@ -219,8 +233,8 @@ export default function Dashboard() {
   const canChangeStatus = (roomId) => {
     const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
     if (!task) return true;
-    // Can't change if not todo
-    if (task.status !== 'todo') return false;
+    const status = task.cleaning_status || 'todo';
+    if (status !== 'todo') return false;
     return true;
   };
 
@@ -228,11 +242,13 @@ export default function Dashboard() {
   const canChangeLateCheckout = (roomId) => {
     const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
     if (!task) return true;
-    if (task.status === 'in_progress' || task.status === 'done' || task.status === 'dnd' || task.status === 'postponed') return false;
+    const status = task.cleaning_status || 'todo';
+    const skipReason = task.cleaning_skip_reason || null;
+    if (status === 'in_progress' || status === 'done' || skipReason === 'dnd' || skipReason === 'postponed') return false;
     return true;
   };
 
-  // Create task if doesn't exist
+  // Create task if doesn't exist (new schema)
   const ensureTaskExists = async (roomId) => {
     const room = ROOMS.find(r => r.id === roomId);
     const task = getTaskForRoom(room);
@@ -241,10 +257,10 @@ export default function Dashboard() {
         roomId: room.id,
         roomNumber: room.number,
         floor: room.floor,
-        type: 'blanc', // Default: à blanc
-        status: 'todo', // Default: à faire
-        assignedTo: null,
-        incident: null
+        cleaning_type: 'blanc',
+        cleaning_status: 'todo',
+        cleaning_assignedTo: null,
+        cleaning_incident: null
       });
     }
   };
@@ -274,15 +290,15 @@ export default function Dashboard() {
           roomId: room.id,
           roomNumber: room.number,
           floor: room.floor,
-          type,
-          status: 'todo',
-          assignedTo: null,
-          incident: null
+          cleaning_type: type,
+          cleaning_status: 'todo',
+          cleaning_assignedTo: null,
+          cleaning_incident: null
         });
       } else {
         await setTask({
           ...task,
-          type,
+          cleaning_type: type,
           roomId: room.id,
           roomNumber: room.number,
           floor: room.floor
@@ -322,7 +338,7 @@ export default function Dashboard() {
     clearSelection();
   };
 
-  // Liberer a room (mark as freed) - also clears late checkout
+  // Liberer a room (mark as freed / done) - also clears late checkout
   const handleFree = async () => {
     if (selectedRooms.size === 0) return;
     
@@ -335,17 +351,18 @@ export default function Dashboard() {
           roomId: room.id,
           roomNumber: room.number,
           floor: room.floor,
-          type: 'blanc',
-          status: 'freed',
-          assignedTo: null,
-          incident: null,
-          lateCheckoutTime: null
+          cleaning_type: 'blanc',
+          cleaning_status: 'done', // Freed = done
+          cleaning_assignedTo: null,
+          cleaning_incident: null,
+          cleaning_lateCheckoutTime: null
         });
       } else {
         await setTask({
           ...task,
-          status: 'freed',
-          lateCheckoutTime: null,
+          cleaning_status: 'done',
+          cleaning_lateCheckoutTime: null,
+          cleaning_assignedTo: null,
           roomId: room.id,
           roomNumber: room.number,
           floor: room.floor
@@ -361,8 +378,8 @@ export default function Dashboard() {
   };
 
   const handleAutoAssign = async () => {
-    // Get tasks that are not done, not in_progress, not dnd
-    const tasksToAssign = tasks.filter(t => t.status === 'todo');
+    // Get tasks that are not done, not in_progress, not skipped
+    const tasksToAssign = tasks.filter(t => t.cleaning_status === 'todo' && t.cleaning_skip_reason === null);
     await autoAssignTasks(tasksToAssign, staff);
   };
 
@@ -446,22 +463,23 @@ export default function Dashboard() {
   const canChangeTypeForSelected = Array.from(selectedRooms).some(roomId => canChangeStatus(roomId));
   const canChangeLateCheckoutForSelected = Array.from(selectedRooms).some(roomId => canChangeLateCheckout(roomId));
 
-  // Check if auto-assign is allowed (only if there are todo tasks)
-  const canAutoAssign = tasks.some(t => t.status === 'todo');
+  // Check if auto-assign is allowed (only if there are todo tasks with no skip reason)
+  const canAutoAssign = tasks.some(t => t.cleaning_status === 'todo' && t.cleaning_skip_reason === null);
 
   // Check if reset is allowed (only if no tasks in progress)
-  const canReset = !tasks.some(t => t.status === 'in_progress');
+  const canReset = !tasks.some(t => t.cleaning_status === 'in_progress');
 
-  // Helper functions
+  // Helper functions (new schema)
   const getStatusClass = (task) => {
     if (!task) return 'status-todo';
-    return `status-${task.status}`;
+    const status = getTaskDisplayStatus(task);
+    return `status-${status}`;
   };
 
   const getCardStyle = (task, isSelected) => {
-    const status = task?.status || 'todo';
-    const isAssigned = task?.assignedTo;
-    const selectable = canSelect(task);
+    const status = getTaskDisplayStatus(task);
+    const isAssigned = task?.cleaning_assignedTo;
+    const selectable = canModifyTask(task);
     
     let bgColor = STATUS_COLORS[status] || '#FFFFFF';
     let borderColor = '#D1D5DB'; // gray-300
@@ -491,7 +509,7 @@ export default function Dashboard() {
 
   const canSelect = (task) => {
     if (!task) return true;
-    return task.status !== 'in_progress' && task.status !== 'done';
+    return canModifyTask(task);
   };
 
   if (loading) {
@@ -656,9 +674,8 @@ export default function Dashboard() {
               <div className="rooms-grid rooms-grid-full">
                 {floorRooms.map(room => {
                   const task = getTaskForRoom(room);
-                  const assignedStaff = task?.assignedTo ? (Array.isArray(staff) && staff.find(s => s.id === task.assignedTo)) : null;
-                  const isSelected = selectedRooms.has(room.id);
-                  const selectable = canSelect(task);
+                  const assignedStaff = task?.cleaning_assignedTo ? (Array.isArray(staff) && staff.find(s => s.id === task.cleaning_assignedTo)) : null;
+                  const displayStatus = getTaskDisplayStatus(task);
                   
                   return (
                     <div 
@@ -668,12 +685,12 @@ export default function Dashboard() {
                       onMouseUp={() => handleRoomMouseUp(room)}
                       onMouseEnter={() => handleRoomMouseEnter(room)}
                       style={getCardStyle(task, isSelected)}
-                      title={task?.status === 'dnd' ? 'Ne pas déranger' : (task?.incident || `Chambre ${room.number}`)}
+                      title={displayStatus === 'dnd' ? 'Ne pas déranger' : (task?.cleaning_incident || `Chambre ${room.number}`)}
                     >
                       <div className="room-number">{room.number}</div>
-                      {task?.type && (
-                        <div className={`room-type-badge ${task.type}`}>
-                          {task.type === 'blanc' ? 'BLANC' : 'RECOUCHE'}
+                      {task?.cleaning_type && (
+                        <div className={`room-type-badge ${task.cleaning_type}`}>
+                          {task.cleaning_type === 'blanc' ? 'BLANC' : 'RECOUCHE'}
                         </div>
                       )}
                       {assignedStaff && (
@@ -682,11 +699,11 @@ export default function Dashboard() {
                         </div>
                       )}
                       <div className="icons">
-                        {task?.lateCheckoutTime && <span title={`Late checkout: ${task.lateCheckoutTime}`}>🕐</span>}
-                        {task?.linenChange && <span title="Draps">🛏</span>}
-                        {task?.status === 'dnd' && <span title="Ne pas déranger">🚫</span>}
-                        {task?.incident && task.incident.length > 0 && (
-                          <span style={{ cursor: 'help', fontSize: '12px', position: 'relative' }} title={task.incident}>
+                        {task?.cleaning_lateCheckoutTime && <span title={`Late checkout: ${task.cleaning_lateCheckoutTime}`}>🕐</span>}
+                        {task?.cleaning_linenChange && <span title="Draps">🛏</span>}
+                        {displayStatus === 'dnd' && <span title="Ne pas déranger">🚫</span>}
+                        {task?.cleaning_incident && task.cleaning_incident.length > 0 && (
+                          <span style={{ cursor: 'help', fontSize: '12px', position: 'relative' }} title={task.cleaning_incident}>
                             💬
                             <span style={{
                               position: 'absolute',
@@ -702,7 +719,7 @@ export default function Dashboard() {
                               zIndex: 1000,
                               display: 'none'
                             }} className="incident-tooltip">
-                              {task.incident}
+                              {task.cleaning_incident}
                             </span>
                           </span>
                         )}
@@ -1219,24 +1236,28 @@ function ReportDetail({ report, onBack, tasks, staff }) {
                 const numB = parseInt(b.roomNumber.toString().replace(/-.*/, '')) || 0;
                 return numA - numB;
               }).map((task) => {
-                const staffMember = report.byStaff?.find(s => s.name === task.assignedTo);
-                let statusLabel = task.status;
+                const staffMember = report.byStaff?.find(s => s.name === task.cleaning_assignedTo);
+                const displayStatus = task.cleaning_status === 'done' ? 'done' : 
+                  (task.cleaning_status === 'in_progress' ? 'in_progress' : 
+                  (task.cleaning_skip_reason === 'dnd' ? 'dnd' : 
+                  (task.cleaning_skip_reason === 'postponed' ? 'postponed' : 
+                  (task.cleaning_lateCheckoutTime ? 'late_checkout' : 'todo'))));
+                let statusLabel = displayStatus;
                 let statusColor = '#6B7280';
-                if (task.status === 'done') { statusLabel = 'Terminée'; statusColor = '#16A34A'; }
-                else if (task.status === 'in_progress') { statusLabel = 'En cours'; statusColor = '#F59E0B'; }
-                else if (task.status === 'dnd') { statusLabel = 'DND'; statusColor = '#DC2626'; }
-                else if (task.status === 'postponed') { statusLabel = 'Reportée'; statusColor = '#8B5CF6'; }
-                else if (task.status === 'freed') { statusLabel = 'Libérée'; statusColor = '#FCD34D'; }
-                else if (task.status === 'late_checkout') { statusLabel = 'Late'; statusColor = '#3B82F6'; }
+                if (displayStatus === 'done') { statusLabel = 'Terminée'; statusColor = '#16A34A'; }
+                else if (displayStatus === 'in_progress') { statusLabel = 'En cours'; statusColor = '#F59E0B'; }
+                else if (displayStatus === 'dnd') { statusLabel = 'DND'; statusColor = '#DC2626'; }
+                else if (displayStatus === 'postponed') { statusLabel = 'Reportée'; statusColor = '#8B5CF6'; }
+                else if (displayStatus === 'late_checkout') { statusLabel = 'Late'; statusColor = '#3B82F6'; }
                 else { statusLabel = 'À faire'; }
                 return (
                   <tr key={task.roomId} style={{ borderTop: '1px solid #E5E7EB' }}>
                     <td style={{ padding: 10, fontWeight: 600 }}>{task.roomNumber}</td>
-                    <td style={{ padding: 10 }}>{task.assignedTo || '-'}</td>
-                    <td style={{ padding: 10, textAlign: 'center' }}>{task.type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
+                    <td style={{ padding: 10 }}>{task.cleaning_assignedTo || '-'}</td>
+                    <td style={{ padding: 10, textAlign: 'center' }}>{task.cleaning_type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
                     <td style={{ padding: 10, textAlign: 'center', color: statusColor, fontWeight: 500 }}>{statusLabel}</td>
-                    <td style={{ padding: 10, textAlign: 'center', color: task.incident ? '#DC2626' : '#6B7280' }}>
-                      {task.incident || '-'}
+                    <td style={{ padding: 10, textAlign: 'center', color: task.cleaning_incident ? '#DC2626' : '#6B7280' }}>
+                      {task.cleaning_incident || '-'}
                     </td>
                     <td style={{ padding: 10, textAlign: 'center' }}>
                       {task.cleaning_startedAt ? (() => {
@@ -1336,7 +1357,7 @@ function PrintLayout({ tasks, staff }) {
     <div className="print-layout">
       {presentStaff.map(s => {
         const staffTasks = tasks
-          .filter(t => t.assignedTo === s.id && t.status !== 'done')
+          .filter(t => t.cleaning_assignedTo === s.id && t.cleaning_status !== 'done')
           .sort((a, b) => {
             const numA = parseInt(a.roomNumber.toString().replace(/-.*/, '')) || 0;
             const numB = parseInt(b.roomNumber.toString().replace(/-.*/, '')) || 0;
@@ -1370,9 +1391,9 @@ function PrintLayout({ tasks, staff }) {
                   {staffTasks.map(task => (
                     <tr key={task.roomId} style={{ borderBottom: '1px solid #ccc' }}>
                       <td style={{ padding: '8px 4px', fontWeight: 'bold' }}>{task.roomNumber}</td>
-                      <td style={{ padding: '8px 4px' }}>{task.type === 'recouche' ? 'Recouche' : 'À blanc'}</td>
-                      <td style={{ textAlign: 'center', padding: '8px 4px' }}>{task.linenChange ? '✓' : ''}</td>
-                      <td style={{ textAlign: 'center', padding: '8px 4px' }}>{task.lateCheckoutTime || ''}</td>
+                      <td style={{ padding: '8px 4px' }}>{task.cleaning_type === 'recouche' ? 'Recouche' : 'À blanc'}</td>
+                      <td style={{ textAlign: 'center', padding: '8px 4px' }}>{task.cleaning_linenChange ? '✓' : ''}</td>
+                      <td style={{ textAlign: 'center', padding: '8px 4px' }}>{task.cleaning_lateCheckoutTime || ''}</td>
                       <td style={{ padding: '8px 4px', borderBottom: '1px dotted #999', minHeight: '20px' }}></td>
                     </tr>
                   ))}

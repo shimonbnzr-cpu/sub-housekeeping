@@ -9,7 +9,8 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  getDocs
+  getDocs,
+  getDoc
 } from 'firebase/firestore';
 
 // Get today's date as YYYY-MM-DD string
@@ -20,6 +21,95 @@ export const getTodayKey = () => {
 // Collection references
 const getTasksCollection = (date) => collection(db, `daily_planning/${date}/tasks`);
 const getStaffCollection = () => collection(db, 'staff');
+
+// ============================================
+// MIGRATION FUNCTION
+// Run once to migrate old schema to new schema
+// ============================================
+export const migrateTasksSchema = async () => {
+  const date = getTodayKey();
+  const snapshot = await getDocs(getTasksCollection(date));
+  
+  console.log(`[Migration] Found ${snapshot.size} tasks to migrate`);
+  
+  let migrated = 0;
+  for (const docSnap of snapshot.docs) {
+    const task = docSnap.data();
+    const taskRef = docSnap.ref;
+    
+    // Check if already migrated (has new schema)
+    if (task.cleaning_status !== undefined) {
+      console.log(`[Migration] Task ${docSnap.id} already migrated`);
+      continue;
+    }
+    
+    // Map old status to new schema
+    let cleaning_status = 'todo';
+    let cleaning_skip_reason = null;
+    
+    switch (task.status) {
+      case 'dnd':
+        cleaning_status = 'todo';
+        cleaning_skip_reason = 'dnd';
+        break;
+      case 'postponed':
+        cleaning_status = 'todo';
+        cleaning_skip_reason = 'postponed';
+        break;
+      case 'late_checkout':
+        cleaning_status = 'todo';
+        cleaning_skip_reason = null;
+        break;
+      case 'todo':
+        cleaning_status = 'todo';
+        cleaning_skip_reason = null;
+        break;
+      case 'freed':
+        cleaning_status = 'todo';
+        cleaning_skip_reason = null;
+        break;
+      case 'in_progress':
+        cleaning_status = 'in_progress';
+        cleaning_skip_reason = null;
+        break;
+      case 'done':
+      case 'ready':
+        cleaning_status = 'done';
+        cleaning_skip_reason = null;
+        break;
+      default:
+        cleaning_status = 'todo';
+        cleaning_skip_reason = null;
+    }
+    
+    // New fields from old task
+    const updates = {
+      cleaning_status,
+      cleaning_skip_reason,
+      cleaning_assignedTo: task.assignedTo || null,
+      cleaning_type: task.type || 'blanc',
+      cleaning_linenChange: task.linenChange || false,
+      cleaning_incident: task.incident || null,
+      cleaning_lateCheckoutTime: task.lateCheckoutTime || null,
+      cleaning_postponedFrom: task.status === 'postponed' ? date : null,
+      // Keep timestamps if they exist
+      cleaning_startedAt: task.cleaning_startedAt || null,
+      cleaning_completedAt: task.cleaning_completedAt || null,
+      updatedAt: serverTimestamp()
+    };
+    
+    await updateDoc(taskRef, updates);
+    migrated++;
+    console.log(`[Migration] Migrated ${docSnap.id}: ${task.status} -> status:${cleaning_status}, skip_reason:${cleaning_skip_reason}`);
+  }
+  
+  console.log(`[Migration] Complete! Migrated ${migrated} tasks`);
+  return migrated;
+};
+
+// ============================================
+// REALTIME SUBSCRIPTIONS
+// ============================================
 
 // Subscribe to today's tasks (realtime)
 export const subscribeToTasks = (callback) => {
@@ -46,13 +136,30 @@ export const subscribeToStaff = (callback) => {
   });
 };
 
+// ============================================
+// TASK OPERATIONS
+// ============================================
+
 // Create or update a task
 export const setTask = async (taskData) => {
   const date = getTodayKey();
   const taskRef = doc(getTasksCollection(date), taskData.roomId);
   
   await setDoc(taskRef, {
-    ...taskData,
+    roomId: taskData.roomId,
+    roomNumber: taskData.roomNumber,
+    floor: taskData.floor,
+    // New schema fields
+    cleaning_status: taskData.cleaning_status || 'todo',
+    cleaning_skip_reason: taskData.cleaning_skip_reason || null,
+    cleaning_assignedTo: taskData.cleaning_assignedTo || null,
+    cleaning_type: taskData.cleaning_type || 'blanc',
+    cleaning_linenChange: taskData.cleaning_linenChange || false,
+    cleaning_incident: taskData.cleaning_incident || null,
+    cleaning_lateCheckoutTime: taskData.cleaning_lateCheckoutTime || null,
+    cleaning_postponedFrom: taskData.cleaning_postponedFrom || null,
+    cleaning_startedAt: taskData.cleaning_startedAt || null,
+    cleaning_completedAt: taskData.cleaning_completedAt || null,
     updatedAt: serverTimestamp()
   }, { merge: true });
 };
@@ -64,30 +171,187 @@ export const batchSetTasks = async (tasksData) => {
   for (const taskData of tasksData) {
     const taskRef = doc(getTasksCollection(date), taskData.roomId);
     await setDoc(taskRef, {
-      ...taskData,
+      roomId: taskData.roomId,
+      roomNumber: taskData.roomNumber,
+      floor: taskData.floor,
+      cleaning_status: 'todo',
+      cleaning_skip_reason: null,
+      cleaning_assignedTo: null,
+      cleaning_type: taskData.type || 'blanc',
+      cleaning_linenChange: taskData.linenChange || false,
+      cleaning_incident: null,
+      cleaning_lateCheckoutTime: null,
+      cleaning_postponedFrom: null,
+      cleaning_startedAt: null,
+      cleaning_completedAt: null,
       updatedAt: serverTimestamp()
     }, { merge: true });
   }
 };
 
-// Update task status
+// ============================================
+// STATUS ACTIONS (New Schema)
+// ============================================
+
+// Start cleaning - set status to in_progress
+export const startTask = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_status: 'in_progress',
+    cleaning_skip_reason: null,
+    cleaning_startedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Finish cleaning - set status to done
+export const finishTask = async (roomId, incident = null) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_status: 'done',
+    cleaning_incident: incident || null,
+    cleaning_completedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Mark as DND - skip_reason = 'dnd', status stays 'todo'
+export const markAsDND = async (roomId, existingIncident = null) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  const newIncident = existingIncident && existingIncident !== 'Ne pas déranger' 
+    ? existingIncident 
+    : 'Ne pas déranger';
+  
+  await updateDoc(taskRef, {
+    cleaning_status: 'todo',
+    cleaning_skip_reason: 'dnd',
+    cleaning_incident: newIncident,
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Cancel DND - clear skip_reason
+export const cancelDND = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_skip_reason: null,
+    cleaning_incident: null,
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Postpone - skip_reason = 'postponed', status stays 'todo'
+export const postponeTask = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_status: 'todo',
+    cleaning_skip_reason: 'postponed',
+    cleaning_postponedFrom: date,
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Cancel postpone
+export const cancelPostpone = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_skip_reason: null,
+    cleaning_postponedFrom: null,
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Set late checkout
+export const setLateCheckout = async (roomId, time) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_status: 'todo',
+    cleaning_skip_reason: null,
+    cleaning_lateCheckoutTime: time,
+    updatedAt: serverTimestamp()
+  });
+};
+
+// Clear late checkout
+export const clearLateCheckout = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  
+  await updateDoc(taskRef, {
+    cleaning_lateCheckoutTime: null,
+    updatedAt: serverTimestamp()
+  });
+};
+
+// ============================================
+// LEGACY FUNCTIONS (for backward compatibility during migration)
+// ============================================
+
+// Update task status (legacy - maps to new schema)
 export const updateTaskStatus = async (roomId, status, additionalData = {}) => {
   const date = getTodayKey();
   const taskRef = doc(getTasksCollection(date), roomId);
   
+  let cleaning_status = 'todo';
+  let cleaning_skip_reason = null;
+  
+  switch (status) {
+    case 'done':
+      cleaning_status = 'done';
+      break;
+    case 'in_progress':
+      cleaning_status = 'in_progress';
+      break;
+    case 'dnd':
+      cleaning_skip_reason = 'dnd';
+      break;
+    case 'postponed':
+      cleaning_skip_reason = 'postponed';
+      break;
+    case 'late_checkout':
+      // Late checkout is not a skip reason
+      break;
+    case 'freed':
+    case 'todo':
+    case 'ready':
+    default:
+      cleaning_status = 'todo';
+      cleaning_skip_reason = null;
+  }
+  
   const updates = {
-    status,
+    cleaning_status,
+    cleaning_skip_reason,
     updatedAt: serverTimestamp()
   };
   
-  // Add timestamps based on status
+  // Handle timestamps
   if (status === 'in_progress' && !additionalData.cleaning_startedAt) {
     updates.cleaning_startedAt = serverTimestamp();
   } else if (status === 'done' && !additionalData.cleaning_completedAt) {
     updates.cleaning_completedAt = serverTimestamp();
   }
   
-  await updateDoc(taskRef, { ...updates, ...additionalData });
+  // Handle incident
+  if (additionalData.incident !== undefined) {
+    updates.cleaning_incident = additionalData.incident;
+  }
+  
+  await updateDoc(taskRef, updates);
 };
 
 // Assign task to staff
@@ -96,7 +360,7 @@ export const assignTask = async (roomId, staffId) => {
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
-    assignedTo: staffId,
+    cleaning_assignedTo: staffId,
     updatedAt: serverTimestamp()
   });
 };
@@ -108,11 +372,15 @@ export const batchAssignTasks = async (roomIds, staffId) => {
   for (const roomId of roomIds) {
     const taskRef = doc(getTasksCollection(date), roomId);
     await updateDoc(taskRef, {
-      assignedTo: staffId,
+      cleaning_assignedTo: staffId,
       updatedAt: serverTimestamp()
     });
   }
 };
+
+// ============================================
+// AUTO-ASSIGN
+// ============================================
 
 // Auto-assign rooms evenly among present staff
 export const autoAssignTasks = async (tasks, staff) => {
@@ -130,8 +398,11 @@ export const autoAssignTasks = async (tasks, staff) => {
   
   for (const room of ROOMS) {
     const task = tasks.find(t => t.roomId === room.id);
-    // Include rooms with todo, freed, or late_checkout status (exclude done, in_progress, dnd, postponed)
-    if (task && ['todo', 'freed', 'late_checkout'].includes(task.status)) {
+    // Include rooms with todo status and no skip_reason (exclude done, in_progress, dnd, postponed)
+    const status = task?.cleaning_status || 'todo';
+    const skipReason = task?.cleaning_skip_reason || null;
+    
+    if (task && status !== 'done' && status !== 'in_progress' && skipReason === null) {
       if (room.type === 'dorm') {
         // Group dorm beds under parent
         const parentId = room.number.split('-')[0];
@@ -169,8 +440,8 @@ export const autoAssignTasks = async (tasks, staff) => {
   });
   
   // Count blanc and recouche (dorms count as 1)
-  const blancRooms = allRooms.filter(r => r.task.type === 'blanc');
-  const recoucheRooms = allRooms.filter(r => r.task.type === 'recouche');
+  const blancRooms = allRooms.filter(r => (r.task?.cleaning_type || 'blanc') === 'blanc');
+  const recoucheRooms = allRooms.filter(r => (r.task?.cleaning_type || 'blanc') === 'recouche');
   const totalBlanc = blancRooms.length;
   const totalRooms = allRooms.length;
   
@@ -280,29 +551,72 @@ export const autoAssignTasks = async (tasks, staff) => {
   }
 };
 
-// Reset all tasks to todo and unassign
+// ============================================
+// RESET OPERATIONS
+// ============================================
+
+// Reset all tasks to todo and unassign (daily reset at 23:59)
+export const resetDailyPlanning = async (tasks) => {
+  const date = getTodayKey();
+  const snapshot = await getDocs(getTasksCollection(date));
+  
+  // Get all tasks and staff before deleting
+  const allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  const staffSnapshot = await getDocs(getStaffCollection());
+  const staff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+  // Generate and save report before reset
+  await generateAndSaveReport(allTasks, staff);
+  
+  // Delete all tasks for today
+  for (const d of snapshot.docs) {
+    await deleteDoc(d.ref);
+  }
+};
+
+// Reset all tasks to todo (keep postponed from previous days)
 export const resetAllTasks = async (tasks) => {
   const date = getTodayKey();
-  
-  // Only reset tasks that are in 'todo' status (not done, in_progress, dnd, or postponed)
-  const tasksToReset = tasks.filter(t => t.status === 'todo' || t.status === 'freed');
   
   // Ensure all rooms exist first
   await ensureAllRoomsHaveTasks();
   
-  // Then reset only the tasks that are in todo status
-  for (const task of tasksToReset) {
-    const taskRef = doc(getTasksCollection(date), task.roomId);
-    await updateDoc(taskRef, {
-      type: 'blanc',
-      assignedTo: null,
-      incident: null,
-      linenChange: false,
-      lateCheckoutTime: null,
-      cleaning_startedAt: null,
-      cleaning_completedAt: null,
-      updatedAt: serverTimestamp()
-    });
+  // Get current tasks
+  const snapshot = await getDocs(getTasksCollection(date));
+  const currentTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+  // Reset tasks that are not postponed from previous days
+  for (const task of currentTasks) {
+    const isPostponedFromYesterday = task.cleaning_postponedFrom && task.cleaning_postponedFrom !== date;
+    const shouldReset = task.cleaning_status !== 'done';
+    
+    if (shouldReset) {
+      const taskRef = doc(getTasksCollection(date), task.roomId);
+      
+      if (isPostponedFromYesterday && task.cleaning_skip_reason === 'postponed') {
+        // Keep postponed from previous day but reset status
+        await updateDoc(taskRef, {
+          cleaning_status: 'todo',
+          cleaning_assignedTo: null,
+          cleaning_startedAt: null,
+          cleaning_completedAt: null,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        // Full reset for all other tasks
+        await updateDoc(taskRef, {
+          cleaning_status: 'todo',
+          cleaning_skip_reason: null,
+          cleaning_assignedTo: null,
+          cleaning_incident: null,
+          cleaning_lateCheckoutTime: null,
+          cleaning_postponedFrom: null,
+          cleaning_startedAt: null,
+          cleaning_completedAt: null,
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
   }
 };
 
@@ -313,8 +627,8 @@ export const resetTaskTypes = async (tasks) => {
   for (const task of tasks) {
     const taskRef = doc(getTasksCollection(date), task.roomId);
     await updateDoc(taskRef, {
-      type: 'blanc',
-      linenChange: false,
+      cleaning_type: 'blanc',
+      cleaning_linenChange: false,
       updatedAt: serverTimestamp()
     });
   }
@@ -333,11 +647,16 @@ export const ensureAllRoomsHaveTasks = async () => {
         roomId: room.id,
         roomNumber: room.number,
         floor: room.floor,
-        type: 'blanc',
-        status: 'todo',
-        assignedTo: null,
-        incident: null,
-        linenChange: false,
+        cleaning_status: 'todo',
+        cleaning_skip_reason: null,
+        cleaning_assignedTo: null,
+        cleaning_type: 'blanc',
+        cleaning_linenChange: false,
+        cleaning_incident: null,
+        cleaning_lateCheckoutTime: null,
+        cleaning_postponedFrom: null,
+        cleaning_startedAt: null,
+        cleaning_completedAt: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -352,24 +671,9 @@ export const deleteTask = async (roomId) => {
   await deleteDoc(taskRef);
 };
 
-// Delete all tasks for today (reset)
-export const resetDailyPlanning = async () => {
-  const date = getTodayKey();
-  const snapshot = await getDocs(getTasksCollection(date));
-  
-  // Get all tasks and staff before deleting
-  const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  const staffSnapshot = await getDocs(getStaffCollection());
-  const staff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  
-  // Generate and save report before reset
-  await generateAndSaveReport(tasks, staff);
-  
-  // Delete all tasks for today
-  for (const d of snapshot.docs) {
-    await deleteDoc(d.ref);
-  }
-};
+// ============================================
+// STAFF OPERATIONS
+// ============================================
 
 // Add incident to task
 export const addIncident = async (roomId, incident) => {
@@ -377,8 +681,7 @@ export const addIncident = async (roomId, incident) => {
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
-    incident: incident,
-    incidentAt: serverTimestamp(),
+    cleaning_incident: incident,
     updatedAt: serverTimestamp()
   });
 };
@@ -437,32 +740,8 @@ export const initializeDefaultStaff = async (defaultStaff) => {
   }
 };
 
-// Set late checkout
-export const setLateCheckout = async (roomId, time) => {
-  const date = getTodayKey();
-  const taskRef = doc(getTasksCollection(date), roomId);
-  
-  await updateDoc(taskRef, {
-    status: 'late_checkout',
-    lateCheckoutTime: time,
-    updatedAt: serverTimestamp()
-  });
-};
-
-// Clear late checkout
-export const clearLateCheckout = async (roomId) => {
-  const date = getTodayKey();
-  const taskRef = doc(getTasksCollection(date), roomId);
-  
-  await updateDoc(taskRef, {
-    status: 'todo',
-    lateCheckoutTime: null,
-    updatedAt: serverTimestamp()
-  });
-};
-
 // ============================================
-// REPORTS - Housekeeping Reports
+// REPORTS
 // ============================================
 
 const getReportsCollection = () => collection(db, 'housekeeping_reports');
@@ -482,13 +761,6 @@ export const subscribeToReports = (callback) => {
   });
 };
 
-// Get a single report by date
-export const getReportByDate = async (date) => {
-  const reportRef = doc(getReportsCollection(), date);
-  // Note: For realtime, use onSnapshot instead
-  return null; // Use subscribeToReport for realtime
-};
-
 // Subscribe to a specific report
 export const subscribeToReport = (date, callback) => {
   const reportRef = doc(getReportsCollection(), date);
@@ -506,11 +778,12 @@ export const subscribeToReport = (date, callback) => {
 export const generateAndSaveReport = async (tasks, staff) => {
   const date = getTodayKey();
   
-  // Calculate summary
-  const doneTasks = tasks.filter(t => t.status === 'done');
-  const dndTasks = tasks.filter(t => t.status === 'dnd');
-  const postponedTasks = tasks.filter(t => t.status === 'postponed');
-  const notDoneTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'dnd' && t.status !== 'postponed');
+  // Calculate summary using new schema
+  const doneTasks = tasks.filter(t => t.cleaning_status === 'done');
+  const dndTasks = tasks.filter(t => t.cleaning_skip_reason === 'dnd');
+  const postponedTasks = tasks.filter(t => t.cleaning_skip_reason === 'postponed');
+  const notDoneTasks = tasks.filter(t => t.cleaning_status !== 'done' && t.cleaning_skip_reason === null);
+  const inProgressTasks = tasks.filter(t => t.cleaning_status === 'in_progress');
   
   // Get timestamps
   const startedTasks = tasks.filter(t => t.cleaning_startedAt);
@@ -536,11 +809,11 @@ export const generateAndSaveReport = async (tasks, staff) => {
   // By staff
   const presentStaff = staff.filter(s => s.presentToday);
   const byStaff = presentStaff.map(s => {
-    const staffTasks = tasks.filter(t => t.assignedTo === s.id);
-    const staffDone = staffTasks.filter(t => t.status === 'done');
-    const staffBlanc = staffDone.filter(t => t.type === 'blanc');
-    const staffRecouche = staffDone.filter(t => t.type === 'recouche');
-    const staffIncidents = staffTasks.filter(t => t.incident && t.incident !== 'Ne pas déranger');
+    const staffTasks = tasks.filter(t => t.cleaning_assignedTo === s.id);
+    const staffDone = staffTasks.filter(t => t.cleaning_status === 'done');
+    const staffBlanc = staffDone.filter(t => t.cleaning_type === 'blanc');
+    const staffRecouche = staffDone.filter(t => t.cleaning_type === 'recouche');
+    const staffIncidents = staffTasks.filter(t => t.cleaning_incident && t.cleaning_incident !== 'Ne pas déranger');
     
     return {
       name: s.name,
@@ -548,8 +821,8 @@ export const generateAndSaveReport = async (tasks, staff) => {
       blanc: staffBlanc.length,
       recouche: staffRecouche.length,
       incidents: staffIncidents.length,
-      postponed: tasks.filter(t => t.assignedTo === s.id && t.status === 'postponed').length,
-      dnd: tasks.filter(t => t.assignedTo === s.id && t.status === 'dnd').length,
+      postponed: tasks.filter(t => t.cleaning_assignedTo === s.id && t.cleaning_skip_reason === 'postponed').length,
+      dnd: tasks.filter(t => t.cleaning_assignedTo === s.id && t.cleaning_skip_reason === 'dnd').length,
       shift_start: s.shift_start || null,
       shift_end: s.shift_end || null
     };
@@ -557,34 +830,34 @@ export const generateAndSaveReport = async (tasks, staff) => {
   
   // Incidents with staff name
   const incidents = tasks
-    .filter(t => t.incident && t.incident !== 'Ne pas déranger')
+    .filter(t => t.cleaning_incident && t.cleaning_incident !== 'Ne pas déranger')
     .map(t => {
-      const assignedStaff = staff.find(s => s.id === t.assignedTo);
+      const assignedStaff = staff.find(s => s.id === t.cleaning_assignedTo);
       return {
         roomNumber: t.roomNumber,
-        text: t.incident,
+        text: t.cleaning_incident,
         assignedTo: assignedStaff?.name || '-'
       };
     });
   
   // Postponed rooms with staff name
   const postponed = postponedTasks.map(t => {
-    const assignedStaff = staff.find(s => s.id === t.assignedTo);
+    const assignedStaff = staff.find(s => s.id === t.cleaning_assignedTo);
     return {
       roomNumber: t.roomNumber,
-      type: t.type,
+      type: t.cleaning_type,
       assignedTo: assignedStaff?.name || '-'
     };
   });
   
   // DND rooms with staff name
   const dndList = dndTasks.map(t => {
-    const assignedStaff = staff.find(s => s.id === t.assignedTo);
+    const assignedStaff = staff.find(s => s.id === t.cleaning_assignedTo);
     return {
       roomNumber: t.roomNumber,
-      type: t.type,
+      type: t.cleaning_type,
       assignedTo: assignedStaff?.name || '-',
-      incident: t.incident || null
+      incident: t.cleaning_incident || null
     };
   });
   
@@ -593,6 +866,7 @@ export const generateAndSaveReport = async (tasks, staff) => {
     summary: {
       total: tasks.length,
       done: doneTasks.length,
+      inProgress: inProgressTasks.length,
       dnd: dndTasks.length,
       postponed: postponedTasks.length,
       notDone: notDoneTasks.length,
@@ -614,4 +888,38 @@ export const generateAndSaveReport = async (tasks, staff) => {
   });
   
   return report;
+};
+
+// ============================================
+// HELPER FUNCTIONS FOR COMPONENTS
+// ============================================
+
+// Get display status for a task (combines cleaning_status and cleaning_skip_reason)
+export const getTaskDisplayStatus = (task) => {
+  if (!task) return 'todo';
+  
+  const status = task.cleaning_status || 'todo';
+  const skipReason = task.cleaning_skip_reason || null;
+  
+  if (status === 'done') return 'done';
+  if (status === 'in_progress') return 'in_progress';
+  if (skipReason === 'dnd') return 'dnd';
+  if (skipReason === 'postponed') return 'postponed';
+  if (task.cleaning_lateCheckoutTime) return 'late_checkout';
+  if (status === 'todo') return 'todo';
+  
+  return 'todo';
+};
+
+// Check if task is active (not done, not skipped)
+export const isTaskActive = (task) => {
+  if (!task) return false;
+  return task.cleaning_status !== 'done' && task.cleaning_skip_reason === null;
+};
+
+// Check if task can be modified
+export const canModifyTask = (task) => {
+  if (!task) return true;
+  const status = task.cleaning_status || 'todo';
+  return status !== 'in_progress' && status !== 'done';
 };

@@ -2,7 +2,22 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CLEANING_TYPES } from '../data/rooms';
 import { STAFF as INITIAL_STAFF, LANGUAGES } from '../data/staff';
-import { subscribeToTasks, subscribeToStaff, updateTaskStatus, assignTask, setStaff as updateStaffInFirestore } from '../services/firestore';
+import { 
+  subscribeToTasks, 
+  subscribeToStaff, 
+  updateTaskStatus, 
+  assignTask, 
+  setStaff as updateStaffInFirestore,
+  startTask,
+  finishTask,
+  markAsDND,
+  cancelDND,
+  postponeTask,
+  cancelPostpone,
+  setLateCheckout,
+  getTaskDisplayStatus,
+  canModifyTask
+} from '../services/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -67,69 +82,87 @@ export default function StaffView() {
     };
   }, []);
 
-  // Filter tasks for selected staff
-  const myTasks = tasks.filter(t => t.assignedTo === selectedStaff);
+  // Filter tasks for selected staff (new schema)
+  const myTasks = tasks.filter(t => t.cleaning_assignedTo === selectedStaff);
 
-  // Sort: in_progress first, then freed, then todo, then dnd, then postponed, then done at bottom
+  // Sort: in_progress first, then todo (active), then dnd/postponed, then done at bottom
   const sortedTasks = [...myTasks].sort((a, b) => {
-    const statusOrder = { in_progress: 0, freed: 1, todo: 2, dnd: 3, postponed: 4, done: 5 };
-    return (statusOrder[a.status] ?? 6) - (statusOrder[b.status] ?? 6);
+    const statusA = a.cleaning_status || 'todo';
+    const statusB = b.cleaning_status || 'todo';
+    const skipA = a.cleaning_skip_reason || null;
+    const skipB = b.cleaning_skip_reason || null;
+    
+    const statusOrder = { 
+      in_progress: 0, 
+      todo: 1, 
+      dnd: 2, 
+      postponed: 3, 
+      done: 4 
+    };
+    
+    // Primary sort by status
+    let orderA = statusOrder[statusA] ?? 5;
+    let orderB = statusOrder[statusB] ?? 5;
+    
+    // Move dnd/postponed to the end for active staff
+    if (skipA === 'dnd' || skipA === 'postponed') orderA = 2;
+    if (skipB === 'dnd' || skipB === 'postponed') orderB = 2;
+    
+    return orderA - orderB;
   });
 
-  const inProgressTasks = sortedTasks.filter(t => t.status === 'in_progress');
-  const todoTasks = sortedTasks.filter(t => t.status === 'todo' || t.status === 'freed');
-  const dndTasks = sortedTasks.filter(t => t.status === 'dnd');
-  const postponedTasks = sortedTasks.filter(t => t.status === 'postponed');
-  const doneTasks = sortedTasks.filter(t => t.status === 'done').sort((a, b) => a.roomNumber - b.roomNumber);
+  // Active tasks (not done, not skipped) - for main list
+  const inProgressTasks = sortedTasks.filter(t => t.cleaning_status === 'in_progress');
+  const activeTasks = sortedTasks.filter(t => 
+    t.cleaning_status === 'todo' && t.cleaning_skip_reason === null
+  );
+  
+  // Skipped tasks (DND and Postponed) - separate sections
+  const dndTasks = sortedTasks.filter(t => t.cleaning_skip_reason === 'dnd');
+  const postponedTasks = sortedTasks.filter(t => t.cleaning_skip_reason === 'postponed');
+  
+  // Done tasks
+  const doneTasks = sortedTasks
+    .filter(t => t.cleaning_status === 'done')
+    .sort((a, b) => a.roomNumber - b.roomNumber);
 
   // Available for transfer (not started by other staff)
   const availableTasks = tasks.filter(t => 
-    t.assignedTo && 
-    t.assignedTo !== selectedStaff && 
-    t.status === 'todo'
+    t.cleaning_assignedTo && 
+    t.cleaning_assignedTo !== selectedStaff && 
+    t.cleaning_status === 'todo' &&
+    t.cleaning_skip_reason === null
   );
 
   const handleStart = async (task) => {
-    await updateTaskStatus(task.roomId, 'in_progress');
+    await startTask(task.roomId);
   };
 
   const handleFinish = async (task) => {
-    await updateTaskStatus(task.roomId, 'done', {
-      incident: incidentText || null
-    });
+    await finishTask(task.roomId, incidentText || null);
     setSelectedTask(null);
     setIncidentText('');
   };
 
   const handleDND = async (task) => {
-    // Keep existing incident if it exists and is not "Ne pas déranger", otherwise just set DND
-    const newIncident = task.incident && task.incident !== 'Ne pas déranger' 
-      ? task.incident 
+    const newIncident = task.cleaning_incident && task.cleaning_incident !== 'Ne pas déranger' 
+      ? task.cleaning_incident 
       : 'Ne pas déranger';
-    await updateTaskStatus(task.roomId, 'dnd', {
-      incident: newIncident
-    });
+    await markAsDND(task.roomId, newIncident);
   };
 
   const handlePostpone = async (task) => {
-    await updateTaskStatus(task.roomId, 'postponed');
+    await postponeTask(task.roomId);
   };
 
   // Cancel DND and go back to todo
   const handleCancelDND = async (task) => {
-    await updateTaskStatus(task.roomId, 'todo', {
-      incident: task.incident === 'Ne pas déranger' ? null : task.incident
-    });
-  };
-
-  // Cancel free and go back to todo
-  const handleCancelFree = async (task) => {
-    await updateTaskStatus(task.roomId, 'todo');
+    await cancelDND(task.roomId);
   };
 
   // Cancel postpone and go back to todo
   const handleCancelPostpone = async (task) => {
-    await updateTaskStatus(task.roomId, 'todo');
+    await cancelPostpone(task.roomId);
   };
 
   const openFinishModal = (task) => {
@@ -185,7 +218,7 @@ export default function StaffView() {
         <h1>🏨 {t('hotel')}</h1>
         <p>{t('hello')} {currentStaff?.name} 👋</p>
         <p style={{ color: '#6B7280', fontSize: 14 }}>
-          {todoTasks.length} {t('toDo')} • {inProgressTasks.length} {t('inProgress')}
+          {activeTasks.length} {t('toDo')} • {inProgressTasks.length} {t('inProgress')}
         </p>
         
         {/* Language selector */}
@@ -266,27 +299,27 @@ export default function StaffView() {
                   borderRadius: '6px', 
                   fontWeight: 600, 
                   fontSize: '12px',
-                  background: task.type === 'recouche' ? '#8B5CF6' : '#3B82F6',
+                  background: task.cleaning_type === 'recouche' ? '#8B5CF6' : '#3B82F6',
                   color: 'white'
                 }}>
-                  {task.type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
+                  {task.cleaning_type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
                 </span>
                 
-                {task.status && (
-                  <span className={`task-type ${task.status === 'in_progress' ? 'in-progress' : task.status}`}>
-                    {task.status === 'in_progress' ? t('inProgress') : task.status === 'freed' ? t('freed') : ''}
+                {task.cleaning_status && (
+                  <span className={`task-type ${task.cleaning_status === 'in_progress' ? 'in-progress' : task.cleaning_status}`}>
+                    {task.cleaning_status === 'in_progress' ? t('inProgress') : ''}
                   </span>
                 )}
               </div>
               
               <div className="task-icons">
-                {task.lateCheckoutTime && <span>🕐 {task.lateCheckoutTime}</span>}
-                {task.linenChange && <span>🛏</span>}
+                {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
+                {task.cleaning_linenChange && <span>🛏</span>}
               </div>
               
-              {task.incident && (
+              {task.cleaning_incident && (
                 <div className="task-incident">
-                  ⚠️ {task.incident}
+                  ⚠️ {task.cleaning_incident}
                 </div>
               )}
               
@@ -298,9 +331,9 @@ export default function StaffView() {
             </div>
           ))}
 
-          {/* À faire */}
-          {todoTasks.map(task => (
-            <div key={task.id} className="task-card" style={task.status === 'freed' ? { background: '#FEF9C3' } : {}}>
+          {/* À faire (active tasks) */}
+          {activeTasks.map(task => (
+            <div key={task.id} className="task-card">
               <div className="task-card-header" style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span className="task-number">{task.roomNumber}</span>
                 
@@ -313,28 +346,28 @@ export default function StaffView() {
                   borderRadius: '6px', 
                   fontWeight: 600, 
                   fontSize: '12px',
-                  background: task.type === 'recouche' ? '#8B5CF6' : '#3B82F6',
+                  background: task.cleaning_type === 'recouche' ? '#8B5CF6' : '#3B82F6',
                   color: 'white'
                 }}>
-                  {task.type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
+                  {task.cleaning_type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
                 </span>
                 
-                {task.status === 'freed' && (
-                  <span className={`task-type ${task.type}`}>
+                {task.cleaning_lateCheckoutTime && (
+                  <span className={`task-type ${task.cleaning_type}`}>
                     🚪
                   </span>
                 )}
               </div>
               
               <div className="task-icons">
-                {task.lateCheckoutTime && <span>🕐 {task.lateCheckoutTime}</span>}
-                {task.linenChange && <span>🛏</span>}
-                {task.status === 'freed' && <span>🚪 {t('freed')}</span>}
+                {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
+                {task.cleaning_linenChange && <span>🛏</span>}
+                {task.cleaning_lateCheckoutTime && <span>🚪 {t('freed')}</span>}
               </div>
               
-              {task.incident && (
+              {task.cleaning_incident && (
                 <div className="task-incident">
-                  ⚠️ {task.incident}
+                  ⚠️ {task.cleaning_incident}
                 </div>
               )}
               
@@ -342,21 +375,12 @@ export default function StaffView() {
                 <Button onClick={() => handleStart(task)}>
                   ▶️ {t('start')}
                 </Button>
-                {task.status === 'freed' && (
-                  <Button variant="secondary" size="sm" onClick={() => handleCancelFree(task)}>
-                    {t('cancel')}
-                  </Button>
-                )}
-                {task.status !== 'freed' && (
-                  <>
-                    <Button variant="destructive" onClick={() => handleDND(task)}>
-                      🚫 {t('dnd')}
-                    </Button>
-                    <Button variant="secondary" onClick={() => handlePostpone(task)}>
-                      📅 {t('postpone')}
-                    </Button>
-                  </>
-                )}
+                <Button variant="destructive" onClick={() => handleDND(task)}>
+                  🚫 {t('dnd')}
+                </Button>
+                <Button variant="secondary" onClick={() => handlePostpone(task)}>
+                  📅 {t('postpone')}
+                </Button>
               </div>
             </div>
           ))}
@@ -381,23 +405,23 @@ export default function StaffView() {
                       borderRadius: '6px', 
                       fontWeight: 600, 
                       fontSize: '12px',
-                      background: task.type === 'recouche' ? '#8B5CF6' : '#3B82F6',
+                      background: task.cleaning_type === 'recouche' ? '#8B5CF6' : '#3B82F6',
                       color: 'white'
                     }}>
-                      {task.type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
+                      {task.cleaning_type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
                     </span>
                     
                     <span className="task-type dnd">🚫</span>
                   </div>
                   
                   <div className="task-icons">
-                    {task.lateCheckoutTime && <span>🕐 {task.lateCheckoutTime}</span>}
-                    {task.linenChange && <span>🛏</span>}
+                    {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
+                    {task.cleaning_linenChange && <span>🛏</span>}
                   </div>
                   
-                  {task.incident && task.incident !== 'Ne pas déranger' && (
+                  {task.cleaning_incident && task.cleaning_incident !== 'Ne pas déranger' && (
                     <div className="task-incident">
-                      ⚠️ {task.incident}
+                      ⚠️ {task.cleaning_incident}
                     </div>
                   )}
                   
@@ -431,23 +455,23 @@ export default function StaffView() {
                       borderRadius: '6px', 
                       fontWeight: 600, 
                       fontSize: '12px',
-                      background: task.type === 'recouche' ? '#8B5CF6' : '#3B82F6',
+                      background: task.cleaning_type === 'recouche' ? '#8B5CF6' : '#3B82F6',
                       color: 'white'
                     }}>
-                      {task.type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
+                      {task.cleaning_type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
                     </span>
                     
                     <span className="task-type postponed">📅</span>
                   </div>
                   
                   <div className="task-icons">
-                    {task.lateCheckoutTime && <span>🕐 {task.lateCheckoutTime}</span>}
-                    {task.linenChange && <span>🛏</span>}
+                    {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
+                    {task.cleaning_linenChange && <span>🛏</span>}
                   </div>
                   
-                  {task.incident && (
+                  {task.cleaning_incident && (
                     <div className="task-incident">
-                      ⚠️ {task.incident}
+                      ⚠️ {task.cleaning_incident}
                     </div>
                   )}
                   
@@ -476,10 +500,10 @@ export default function StaffView() {
                   borderRadius: '6px', 
                   fontWeight: 600, 
                   fontSize: '12px',
-                  background: task.type === 'recouche' ? '#8B5CF6' : '#3B82F6',
+                  background: task.cleaning_type === 'recouche' ? '#8B5CF6' : '#3B82F6',
                   color: 'white'
                 }}>
-                  {task.type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
+                  {task.cleaning_type === 'recouche' ? `🛏️ ${t('recouche')}` : `🧹 ${t('blanc')}`}
                 </span>
                 
                 <span style={{ 
@@ -492,13 +516,13 @@ export default function StaffView() {
               </div>
               
               <div className="task-icons">
-                {task.lateCheckoutTime && <span>🕐 {task.lateCheckoutTime}</span>}
-                {task.linenChange && <span>🛏</span>}
+                {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
+                {task.cleaning_linenChange && <span>🛏</span>}
               </div>
               
-              {task.incident && (
+              {task.cleaning_incident && (
                 <div className="task-incident">
-                  ⚠️ {task.incident}
+                  ⚠️ {task.cleaning_incident}
                 </div>
               )}
             </div>
@@ -526,7 +550,7 @@ export default function StaffView() {
           </p>
           <div className="transfer-list">
             {availableTasks.map(task => {
-              const assignedStaff = staff.find(s => s.id === task.assignedTo);
+              const assignedStaff = staff.find(s => s.id === task.cleaning_assignedTo);
               return (
                 <div 
                   key={task.id} 
@@ -537,8 +561,8 @@ export default function StaffView() {
                   }}
                 >
                   <span className="transfer-room">{task.roomNumber}</span>
-                  <span className={`badge badge-${task.type}`}>
-                    {CLEANING_TYPES[task.type] || t('blanc')}
+                  <span className={`badge badge-${task.cleaning_type}`}>
+                    {CLEANING_TYPES[task.cleaning_type] || t('blanc')}
                   </span>
                   <span className="transfer-from">de {assignedStaff?.name}</span>
                 </div>
