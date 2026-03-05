@@ -676,6 +676,7 @@ export default function Dashboard() {
                   const task = getTaskForRoom(room);
                   const assignedStaff = task?.cleaning_assignedTo ? (Array.isArray(staff) && staff.find(s => s.id === task.cleaning_assignedTo)) : null;
                   const displayStatus = getTaskDisplayStatus(task);
+                  const isSelected = selectedRooms.has(room.id);
                   
                   return (
                     <div 
