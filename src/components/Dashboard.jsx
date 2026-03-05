@@ -339,7 +339,7 @@ export default function Dashboard() {
     clearSelection();
   };
 
-  // Liberer a room (mark as done) - keep late checkout if set
+  // Liberer a room (guest left, needs cleaning) - set to todo
   const handleFree = async () => {
     if (selectedRooms.size === 0) return;
     
@@ -353,13 +353,13 @@ export default function Dashboard() {
           roomNumber: room.number,
           floor: room.floor,
           cleaning_type: 'blanc',
-          cleaning_status: 'done',
+          cleaning_status: 'todo',
           cleaning_assignedTo: null
         });
       } else {
         await setTask({
           ...task,
-          cleaning_status: 'done',
+          cleaning_status: 'todo',
           cleaning_assignedTo: null,
           roomId: room.id,
           roomNumber: room.number,
