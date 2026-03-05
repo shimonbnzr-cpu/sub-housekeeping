@@ -273,14 +273,12 @@ export const cancelPostpone = async (roomId) => {
   });
 };
 
-// Set late checkout
+// Set late checkout - just add time, don't change status
 export const setLateCheckout = async (roomId, time) => {
   const date = getTodayKey();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
-    cleaning_status: 'todo',
-    cleaning_skip_reason: null,
     cleaning_lateCheckoutTime: time,
     updatedAt: serverTimestamp()
   });
