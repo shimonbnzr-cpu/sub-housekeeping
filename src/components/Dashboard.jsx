@@ -126,13 +126,13 @@ export default function Dashboard() {
 
   // Computed stats (new schema)
   const totalRooms = ROOMS.length;
-  const doneCount = tasks.filter(t => t.cleaning_status === 'done').length;
+  const doneCount = tasks.filter(t => t.cleaning_status === 'done' ).length;
   const progress = totalRooms > 0 ? Math.round((doneCount / totalRooms) * 100) : 0;
 
   // Stats per staff member (new schema)
   const staffStats = Array.isArray(staff) ? staff.map(s => {
     const assigned = tasks.filter(t => t.cleaning_assignedTo === s.id).length;
-    const done = tasks.filter(t => t.cleaning_assignedTo === s.id && t.cleaning_status === 'done').length;
+    const done = tasks.filter(t => t.cleaning_assignedTo === s.id && (t.cleaning_status === 'done' )).length;
     return { ...s, assigned, done };
   }).filter(s => s.presentToday) : [];
 
@@ -164,7 +164,7 @@ export default function Dashboard() {
 
   const handleRoomMouseDown = (room, e) => {
     const task = getTaskForRoom(room);
-    if (task && (task.status === 'in_progress' || task.status === 'done')) {
+    if (task && (task.status === 'in_progress' || task.status === 'done' || task.status === 'ready')) {
       return;
     }
     
@@ -201,7 +201,7 @@ export default function Dashboard() {
   const handleRoomMouseEnter = (room) => {
     if (isDragging) {
       const task = getTaskForRoom(room);
-      if (task && (task.status === 'in_progress' || task.status === 'done')) {
+      if (task && (task.status === 'in_progress' || task.status === 'done' || task.status === 'ready')) {
         return;
       }
       setSelectedRooms(prev => new Set([...prev, room.id]));
@@ -227,8 +227,8 @@ export default function Dashboard() {
     if (!task) return true;
     const status = task.cleaning_status || 'todo';
     const skipReason = task.cleaning_skip_reason || null;
-    // Can't change if in_progress, done, dnd, or postponed
-    if (status === 'in_progress' || status === 'done' || skipReason === 'dnd' || skipReason === 'postponed') return false;
+    // Can't change if in_progress, done, ready, dnd, or postponed
+    if (status === 'in_progress' || status === 'done' || status === 'ready' || skipReason === 'dnd' || skipReason === 'postponed') return false;
     return true;
   };
 
@@ -247,8 +247,8 @@ export default function Dashboard() {
     if (!task) return true;
     const status = task.cleaning_status || 'todo';
     const skipReason = task.cleaning_skip_reason || null;
-    // Can't change if in_progress, done, dnd, or postponed (but freed is OK - will clear freed)
-    if (status === 'in_progress' || status === 'done' || skipReason === 'dnd' || skipReason === 'postponed') return false;
+    // Can't change if in_progress, done, ready, dnd, or postponed (but freed is OK - will clear freed)
+    if (status === 'in_progress' || status === 'done' || status === 'ready' || skipReason === 'dnd' || skipReason === 'postponed') return false;
     return true;
   };
 
@@ -363,8 +363,8 @@ export default function Dashboard() {
   };
 
   const handleAutoAssign = async () => {
-    // Get tasks that are not done, not in_progress, not skipped
-    const tasksToAssign = tasks.filter(t => t.cleaning_status === 'todo' && t.cleaning_skip_reason === null);
+    // Get tasks that are not done, not ready, not in_progress, not skipped
+    const tasksToAssign = tasks.filter(t => (t.cleaning_status === 'todo' ) && t.cleaning_skip_reason === null);
     await autoAssignTasks(tasksToAssign, staff);
   };
 
@@ -448,8 +448,8 @@ export default function Dashboard() {
   const canChangeTypeForSelected = Array.from(selectedRooms).some(roomId => canChangeStatus(roomId));
   const canChangeLateCheckoutForSelected = Array.from(selectedRooms).some(roomId => canChangeLateCheckout(roomId));
 
-  // Check if auto-assign is allowed (only if there are todo tasks with no skip reason)
-  const canAutoAssign = tasks.some(t => t.cleaning_status === 'todo' && t.cleaning_skip_reason === null);
+  // Check if auto-assign is allowed (only if there are todo or ready tasks with no skip reason)
+  const canAutoAssign = tasks.some(t => (t.cleaning_status === 'todo' ) && t.cleaning_skip_reason === null);
 
   // Check if reset is allowed (only if no tasks in progress)
   const canReset = !tasks.some(t => t.cleaning_status === 'in_progress');
@@ -1225,13 +1225,15 @@ function ReportDetail({ report, onBack, tasks, staff }) {
               }).map((task) => {
                 const staffMember = report.byStaff?.find(s => s.name === task.cleaning_assignedTo);
                 const displayStatus = task.cleaning_status === 'done' ? 'done' : 
+                  (task.cleaning_status === 'ready' ? 'ready' :
                   (task.cleaning_status === 'in_progress' ? 'in_progress' : 
                   (task.cleaning_skip_reason === 'dnd' ? 'dnd' : 
                   (task.cleaning_skip_reason === 'postponed' ? 'postponed' : 
-                  (task.cleaning_lateCheckoutTime ? 'late_checkout' : 'todo'))));
+                  (task.cleaning_lateCheckoutTime ? 'late_checkout' : 'todo')))));
                 let statusLabel = displayStatus;
                 let statusColor = '#6B7280';
                 if (displayStatus === 'done') { statusLabel = 'Terminée'; statusColor = '#16A34A'; }
+                else if (displayStatus === 'ready') { statusLabel = 'Prête'; statusColor = '#16A34A'; }
                 else if (displayStatus === 'in_progress') { statusLabel = 'En cours'; statusColor = '#F59E0B'; }
                 else if (displayStatus === 'dnd') { statusLabel = 'DND'; statusColor = '#DC2626'; }
                 else if (displayStatus === 'postponed') { statusLabel = 'Reportée'; statusColor = '#8B5CF6'; }
@@ -1344,7 +1346,7 @@ function PrintLayout({ tasks, staff }) {
     <div className="print-layout">
       {presentStaff.map(s => {
         const staffTasks = tasks
-          .filter(t => t.cleaning_assignedTo === s.id && t.cleaning_status !== 'done')
+          .filter(t => t.cleaning_assignedTo === s.id && t.cleaning_status !== 'done' && t.cleaning_status !== 'ready')
           .sort((a, b) => {
             const numA = parseInt(a.roomNumber.toString().replace(/-.*/, '')) || 0;
             const numB = parseInt(b.roomNumber.toString().replace(/-.*/, '')) || 0;

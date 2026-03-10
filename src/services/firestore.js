@@ -173,11 +173,13 @@ export const batchSetTasks = async (tasksData) => {
   
   for (const taskData of tasksData) {
     const taskRef = doc(getTasksCollection(date), taskData.roomId);
+    // Determine initial status: use parsed status (ready/done) or default to todo
+    const initialStatus = taskData.status || 'todo';
     await setDoc(taskRef, {
       roomId: taskData.roomId,
       roomNumber: taskData.roomNumber,
       floor: taskData.floor,
-      cleaning_status: 'todo',
+      cleaning_status: initialStatus,
       cleaning_skip_reason: null,
       cleaning_freed: false,
       cleaning_assignedTo: null,

@@ -134,12 +134,23 @@ const parseMedialogData = (worksheet, fileDate) => {
     // Check recouche (E column) - "X" or "R" means recouche
     const isRecouche = recCell && (recCell.v === 'X' || recCell.v === 'R');
     
-    // Determine cleaning type
-    let cleaningType = 'blanc';
-    if (isRecouche && !isDeparture) {
+    // Determine status and type based on import data:
+    // - E non vide → recouche → status todo
+    // - D non vide (et E vide) → blanc → status todo
+    // - D et E vides → déjà faite → status done, type null
+    let status = 'todo';
+    let cleaningType = null;
+    
+    if (isRecouche) {
+      status = 'todo';
       cleaningType = 'recouche';
     } else if (isDeparture) {
+      status = 'todo';
       cleaningType = 'blanc';
+    } else {
+      // D et E vides → déjà faite
+      status = 'done';
+      cleaningType = null;
     }
     
     // Calculate linen change for recouche
@@ -169,7 +180,7 @@ const parseMedialogData = (worksheet, fileDate) => {
       floor: room.floor,
       type: cleaningType,
       linenChange,
-      status: 'todo',
+      status,
       assignedTo: null,
       incident: null,
       lateCheckoutTime: null,
