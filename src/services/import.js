@@ -46,10 +46,19 @@ export const parseMedialogFile = (file) => {
           console.warn('Could not extract date from B4, using today');
         }
         
+        // Always use today's date for calculations
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Check if file date is different from today (warning)
+        const todayStr = today.toISOString().split('T')[0];
+        const fileDateStr = fileDate.toISOString().split('T')[0];
+        const dateWarning = fileDateStr !== todayStr ? `⚠️ Attention: la date du fichier (${fileDate.toLocaleDateString()}) est différente d'aujourd'hui` : null;
+        
         // Parse the worksheet directly
-        const tasks = parseMedialogData(worksheet, fileDate);
+        const tasks = parseMedialogData(worksheet, today);
         console.log('Parsed tasks:', tasks);
-        resolve({ tasks, fileDate });
+        resolve({ tasks, fileDate, dateWarning });
       } catch (error) {
         console.error('Parse error:', error);
         reject(error);
@@ -79,8 +88,9 @@ const parseMedialogData = (worksheet, fileDate) => {
   const range = XLSX.utils.decode_range(worksheet['!ref'] || 'B9:T1000');
   console.log('Range:', range);
   
-  // Column indices: B=1, D=3, E=4, K=10, L=11
+  // Column indices: B=1, C=2, D=3, E=4, K=10, L=11
   const roomCol = 1;  // B
+  const statusCol = 2; // C - "S" = checkout effectué, chambre libérée
   const depCol = 3;   // D
   const recCol = 4;   // E
   const arrCol = 10;  // K
@@ -90,6 +100,7 @@ const parseMedialogData = (worksheet, fileDate) => {
   for (let rowIdx = 8; rowIdx <= range.e.r; rowIdx++) {
     // Get cell values directly from worksheet
     const roomCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: roomCol })];
+    const statusCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: statusCol })];
     const depCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: depCol })];
     const recCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: recCol })];
     const arrCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: arrCol })];
@@ -133,10 +144,13 @@ const parseMedialogData = (worksheet, fileDate) => {
     const isDeparture = depCell && (depCell.v === 'X' || depCell.v === 'D');
     // Check recouche (E column) - "X" or "R" means recouche
     const isRecouche = recCell && (recCell.v === 'X' || recCell.v === 'R');
+    // Check status column (C) - "S" means checkout effectué, chambre libérée
+    const isCheckedOut = statusCell && statusCell.v === 'S';
     
     // Determine status and type based on import data:
     // - E non vide → recouche → status todo
     // - D non vide (et E vide) → blanc → status todo
+    // - C = "S" + D vide + E vide → blanc libérée → status todo
     // - D et E vides → déjà faite → status done, type null
     let status = 'todo';
     let cleaningType = null;
@@ -145,6 +159,10 @@ const parseMedialogData = (worksheet, fileDate) => {
       status = 'todo';
       cleaningType = 'recouche';
     } else if (isDeparture) {
+      status = 'todo';
+      cleaningType = 'blanc';
+    } else if (isCheckedOut) {
+      // Column C = "S" + D vide + E vide → checkout effectué, chambre libérée
       status = 'todo';
       cleaningType = 'blanc';
     } else {

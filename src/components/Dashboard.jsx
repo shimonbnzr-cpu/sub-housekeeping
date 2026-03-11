@@ -53,6 +53,7 @@ export default function Dashboard() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importedTasks, setImportedTasks] = useState([]);
   const [importedFileDate, setImportedFileDate] = useState(null);
+  const [dateWarning, setDateWarning] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
@@ -380,12 +381,14 @@ export default function Dashboard() {
       if (result && result.tasks) {
         setImportedTasks(result.tasks || []);
         setImportedFileDate(result.fileDate);
+        setDateWarning(result.dateWarning || null);
         if (result.tasks.length === 0) {
           alert('Aucune chambre détectée dans le fichier. Vérifiez le format.');
         }
       } else {
         setImportedTasks([]);
         setImportedFileDate(null);
+        setDateWarning(null);
         alert('Erreur lors de l\'import: format inattendu');
       }
     } catch (error) {
@@ -945,6 +948,12 @@ export default function Dashboard() {
               />
               {isImporting && <p>Import en cours...</p>}
             </div>
+            
+            {dateWarning && (
+              <div style={{ padding: '12px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 8, marginBottom: 16 }}>
+                {dateWarning}
+              </div>
+            )}
             
             {importedTasks.length > 0 && (
               <div className="import-preview">
