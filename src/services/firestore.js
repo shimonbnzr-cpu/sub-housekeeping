@@ -173,8 +173,8 @@ export const batchSetTasks = async (tasksData) => {
   
   for (const taskData of tasksData) {
     const taskRef = doc(getTasksCollection(date), taskData.roomId);
-    // Determine initial status: use parsed status (ready/done) or default to todo
-    const initialStatus = taskData.status || 'todo';
+    // Determine initial status: use parsed cleaning_status or default to todo
+    const initialStatus = taskData.cleaning_status || 'todo';
     await setDoc(taskRef, {
       roomId: taskData.roomId,
       roomNumber: taskData.roomNumber,
@@ -183,8 +183,8 @@ export const batchSetTasks = async (tasksData) => {
       cleaning_skip_reason: null,
       cleaning_freed: false,
       cleaning_assignedTo: null,
-      cleaning_type: taskData.type || 'blanc',
-      cleaning_linenChange: taskData.linenChange || false,
+      cleaning_type: taskData.cleaning_type || 'blanc',
+      cleaning_linenChange: taskData.cleaning_linenChange || false,
       cleaning_incident: null,
       cleaning_lateCheckoutTime: null,
       cleaning_postponedFrom: null,
