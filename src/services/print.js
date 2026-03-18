@@ -38,7 +38,7 @@ export const printSheets = (staffList, tasks) => {
   
   const sheets = presentStaff.map(staff => {
     const staffTasks = tasks
-      .filter(t => t.assignedTo === staff.id && t.status !== 'done')
+      .filter(t => t.cleaning_assignedTo === staff.id && t.cleaning_status !== 'done' && t.cleaning_status !== 'ready')
       .sort((a, b) => {
         const numA = parseInt(a.roomNumber?.toString().replace(/-.*/, '') || '0');
         const numB = parseInt(b.roomNumber?.toString().replace(/-.*/, '') || '0');
@@ -69,8 +69,8 @@ export const printSheets = (staffList, tasks) => {
           ${tasks.map(t => `
             <tr>
               <td><strong>${t.roomNumber}</strong></td>
-              <td>${t.type === 'recouche' ? 'Recouche' : 'À blanc'} ${t.linenChange ? '🛏' : ''}</td>
-              <td>${t.lateCheckoutTime ? '🕐 Late ' + t.lateCheckoutTime : ''}</td>
+              <td>${t.cleaning_type === 'recouche' ? 'Recouche' : 'À blanc'} ${t.cleaning_linenChange ? '🛏' : ''}</td>
+              <td>${t.cleaning_lateCheckoutTime ? '🕐 Late ' + t.cleaning_lateCheckoutTime : ''}</td>
             </tr>
           `).join('')}
         </tbody>
