@@ -18,14 +18,16 @@ export const parseMedialogFile = (file) => {
         const worksheet = workbook.Sheets[sheetName];
         console.log('Worksheet range:', worksheet['!ref']);
         
-        // Detect file type from B4
+        // Detect file type from B4 - check if contains specific keywords
         const typeCell = worksheet['B4'];
         const typeStr = typeCell?.v ? String(typeCell.v).toLowerCase() : '';
+        console.log('B4 content:', typeStr);
         
         let fileType = null;
-        if (typeStr.includes("état gouvernante") || typeStr.includes("etat gouvernante")) {
+        // Check for keywords regardless of other text in the cell
+        if (typeStr.includes("gouvernante")) {
           fileType = 'etat_gouvernante';
-        } else if (typeStr.includes("état des chambres") || typeStr.includes("etat des chambres")) {
+        } else if (typeStr.includes("chambres")) {
           fileType = 'etat_chambres';
         }
         
@@ -157,6 +159,7 @@ const parseEtatChambres = (worksheet, fileDate) => {
     
     // Get status value from column C
     const statusValue = statusCell?.v ? String(statusCell.v).trim().toUpperCase() : '';
+    console.log(`Room ${roomNumber}: status="${statusValue}"`);
     
     // Get dates from columns F and G (JS Date objects)
     const arrivalDate = arrCell?.v instanceof Date ? arrCell.v : null;
