@@ -401,19 +401,24 @@ export default function Dashboard() {
   const confirmImport = async () => {
     if (importedTasks.length === 0) return;
     
-    // Get all current room IDs
-    const currentRoomIds = new Set(tasks.map(t => t.roomId));
-    const importedRoomIds = new Set(importedTasks.map(t => t.roomId));
-    
-    // Find rooms not in import - mark them as done
-    const roomsToMarkDone = tasks.filter(t => !importedRoomIds.has(t.roomId));
-    
-    // Import the rooms from file
-    await batchSetTasks(importedTasks);
-    
-    // Mark absent rooms as done
-    for (const room of roomsToMarkDone) {
-      await updateTaskStatus(room.roomId, 'done');
+    try {
+      // Get all current room IDs
+      const currentRoomIds = new Set(tasks.map(t => t.roomId));
+      const importedRoomIds = new Set(importedTasks.map(t => t.roomId));
+      
+      // Find rooms not in import - mark them as done
+      const roomsToMarkDone = tasks.filter(t => !importedRoomIds.has(t.roomId));
+      
+      // Import the rooms from file
+      await batchSetTasks(importedTasks);
+      
+      // Mark absent rooms as done
+      for (const room of roomsToMarkDone) {
+        await updateTaskStatus(room.roomId, 'done');
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      alert('Erreur lors de l\'import: ' + error.message);
     }
     
     setShowImportModal(false);
