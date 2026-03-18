@@ -971,7 +971,7 @@ export default function Dashboard() {
                   fileDate.setHours(0, 0, 0, 0);
                   const diffDays = Math.abs(Math.floor((today - fileDate) / (1000 * 60 * 60 * 24)));
                   
-                  if (diffDays > 1) {
+                  if (diffDays >= 1) {
                     const dateStr = fileDate.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
                     return (
                       <div style={{ 
