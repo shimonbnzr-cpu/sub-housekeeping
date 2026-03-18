@@ -954,12 +954,6 @@ export default function Dashboard() {
               {isImporting && <p>Import en cours...</p>}
             </div>
             
-            {dateWarning && (
-              <div style={{ padding: '12px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 8, marginBottom: 16 }}>
-                {dateWarning}
-              </div>
-            )}
-            
             {importedTasks.length > 0 && (
               <div className="import-preview">
                 <h3 style={{ marginBottom: 12 }}>{importedTasks.length} chambres détectées</h3>
