@@ -959,9 +959,9 @@ export default function Dashboard() {
               <div className="import-preview">
                 <h3 style={{ marginBottom: 12 }}>{importedTasks.length} chambres détectées</h3>
                 <div className="import-stats" style={{ display: 'flex', gap: 16, marginBottom: 16, padding: '12px', background: '#F9FAFB', borderRadius: 8 }}>
-                  <span>🏠 Blanc: <strong>{importedTasks.filter(t => t.type === 'blanc').length}</strong></span>
-                  <span>🛏️ Recouche: <strong>{importedTasks.filter(t => t.type === 'recouche').length}</strong></span>
-                  <span>🧺 Linges: <strong>{importedTasks.filter(t => t.linenChange).length}</strong></span>
+                  <span>🏠 Blanc: <strong>{importedTasks.filter(t => t.cleaning_type === 'blanc').length}</strong></span>
+                  <span>🛏️ Recouche: <strong>{importedTasks.filter(t => t.cleaning_type === 'recouche').length}</strong></span>
+                  <span>🧺 Linges: <strong>{importedTasks.filter(t => t.cleaning_linenChange).length}</strong></span>
                 </div>
                 
                 {/* Date warning */}
