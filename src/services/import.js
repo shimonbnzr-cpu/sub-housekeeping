@@ -73,7 +73,10 @@ export const parseMedialogFile = (file) => {
         const dateWarning = fileDateStr !== todayStr ? `⚠️ Attention: la date du fichier (${fileDate.toLocaleDateString()}) est différente d'aujourd'hui` : null;
         
         // Parse the worksheet based on detected type
-        const tasks = parseMedialogData(worksheet, today, fileType);
+        const tasks = fileType === 'etat_chambres' 
+          ? parseEtatChambres(worksheet, today)
+          : parseEtatGouvernante(worksheet, today);
+        
         console.log('Parsed tasks:', tasks);
         resolve({ tasks, fileDate, dateWarning });
       } catch (error) {
@@ -92,31 +95,37 @@ export const getImportedRoomIds = (tasks) => {
   return new Set(tasks.map(t => t.roomId));
 };
 
-// Parse Medialog data based on file type
-const parseMedialogData = (worksheet, fileDate, fileType) => {
+// Parse "État des Chambres" format
+// - Data starts row 9
+// - Column B (index 1): room number
+// - Column C (index 2): status as direct text
+// - Column F (index 5): arrival date (JS Date object)
+// - Column G (index 6): departure date (JS Date object)
+const parseEtatChambres = (worksheet, fileDate) => {
   const tasks = [];
   const today = fileDate || new Date();
   today.setHours(0, 0, 0, 0);
   
-  console.log('Parsing worksheet with date:', today, 'type:', fileType);
+  console.log('Parsing État des Chambres with date:', today);
   
-  // Parse rows from row 9 onwards (Excel row 9 = data starts here)
   const range = XLSX.utils.decode_range(worksheet['!ref'] || 'B9:T1000');
   console.log('Range:', range);
   
-  // Column indices: B=1, C=2, D=3, E=4
+  // Column indices
   const roomCol = 1;  // B
-  const statusCol = 2; // C - Status column
+  const statusCol = 2; // C
+  const arrCol = 5;    // F
+  const depCol = 6;    // G
   
   // Start from row 9 (index 8)
   for (let rowIdx = 8; rowIdx <= range.e.r; rowIdx++) {
-    // Get cell values directly from worksheet
     const roomCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: roomCol })];
     const statusCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: statusCol })];
+    const arrCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: arrCol })];
+    const depCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: depCol })];
     
     if (!roomCell || !roomCell.v) continue;
     
-    // Get room number
     const roomNumberRaw = String(roomCell.v).trim();
     console.log('Room:', roomNumberRaw);
     
@@ -125,11 +134,9 @@ const parseMedialogData = (worksheet, fileDate, fileType) => {
       continue;
     }
     
-    // Check if it's a number or valid room
     const testNum = parseInt(roomNumberRaw.replace('-', ''));
     if (isNaN(testNum)) continue;
     
-    // Find matching room in our config
     let roomNumber = roomNumberRaw;
     if (roomNumber.includes('-')) {
       roomNumber = roomNumber.replace('-', '_');
@@ -151,16 +158,18 @@ const parseMedialogData = (worksheet, fileDate, fileType) => {
     // Get status value from column C
     const statusValue = statusCell?.v ? String(statusCell.v).trim().toUpperCase() : '';
     
-    // Mapping based on status column (column C):
-    // - "PARTI" → cleaning_type: "blanc", cleaning_status: "todo"
-    // - "DEPART" → cleaning_type: "blanc", cleaning_status: "todo"
-    // - "RECOUCHE" → cleaning_type: "recouche", cleaning_status: "todo"
-    // - "DRAPS" → cleaning_type: "recouche", cleaning_status: "todo", cleaning_linenChange: true
-    // - "LIBRE" → cleaning_status: "done"
-    // - "ARRIVEE" → cleaning_status: "done"
-    // - Empty/not in list → cleaning_status: "done" (absent from export = already clean)
+    // Get dates from columns F and G (JS Date objects)
+    const arrivalDate = arrCell?.v instanceof Date ? arrCell.v : null;
+    const departureDate = depCell?.v instanceof Date ? depCell.v : null;
     
-    let cleaning_status = 'done'; // Default: done (absent from export = clean)
+    // Mapping:
+    // - "PARTI" / "DEPART" → blanc, todo
+    // - "RECOUCHE" → recouche, todo
+    // - "DRAPS" → recouche + draps, todo
+    // - "LIBRE" / "ARRIVEE" → done
+    // - Absent from export → done
+    
+    let cleaning_status = 'done';
     let cleaning_type = null;
     let cleaning_linenChange = false;
     
@@ -178,7 +187,25 @@ const parseMedialogData = (worksheet, fileDate, fileType) => {
       cleaning_status = 'done';
       cleaning_type = null;
     }
-    // Empty or unrecognized → stays as 'done' (absent from export)
+    // Empty or unrecognized → stays as 'done'
+    
+    // Calculate linen change for recouche (if arrival/departure dates exist)
+    if (cleaning_type === 'recouche' && arrivalDate && departureDate) {
+      const arrival = new Date(arrivalDate);
+      const departure = new Date(departureDate);
+      arrival.setHours(0, 0, 0, 0);
+      departure.setHours(0, 0, 0, 0);
+      
+      const nightsStayed = Math.floor((today - arrival) / (1000 * 60 * 60 * 24));
+      const nightsRemaining = Math.floor((departure - today) / (1000 * 60 * 60 * 24));
+      
+      console.log(`Room ${roomNumber}: arrival=${arrival.toISOString()}, departure=${departure.toISOString()}, nightsStayed=${nightsStayed}, nightsRemaining=${nightsRemaining}`);
+      
+      // Change linen if >= 3 nights stayed and >= 2 nights remaining
+      if (nightsStayed >= 3 && nightsRemaining >= 2) {
+        cleaning_linenChange = true;
+      }
+    }
     
     tasks.push({
       roomId: room.id,
@@ -198,30 +225,99 @@ const parseMedialogData = (worksheet, fileDate, fileType) => {
   return tasks;
 };
 
-// Parse Excel date
-const parseExcelDate = (dateValue) => {
-  if (!dateValue) return null;
+// Parse "État Gouvernante" format (legacy)
+const parseEtatGouvernante = (worksheet, fileDate) => {
+  const tasks = [];
+  const today = fileDate || new Date();
+  today.setHours(0, 0, 0, 0);
   
-  // If it's already a Date
-  if (dateValue instanceof Date) {
-    return dateValue;
-  }
+  console.log('Parsing État Gouvernante with date:', today);
   
-  // If it's a serial number (Excel date)
-  if (typeof dateValue === 'number') {
-    const excelEpoch = new Date(1899, 11, 30);
-    return new Date(excelEpoch.getTime() + dateValue * 24 * 60 * 60 * 1000);
-  }
+  const range = XLSX.utils.decode_range(worksheet['!ref'] || 'B9:T1000');
+  console.log('Range:', range);
   
-  // If it's a string, try to parse
-  if (typeof dateValue === 'string') {
-    const parsed = new Date(dateValue);
-    if (!isNaN(parsed.getTime())) {
-      return parsed;
+  // Column indices: B=1, C=2, D=3, E=4
+  const roomCol = 1;  // B
+  const statusCol = 2; // C
+  const depCol = 3;   // D
+  const recCol = 4;   // E
+  
+  // Start from row 9 (index 8)
+  for (let rowIdx = 8; rowIdx <= range.e.r; rowIdx++) {
+    const roomCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: roomCol })];
+    const statusCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: statusCol })];
+    const depCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: depCol })];
+    const recCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: recCol })];
+    
+    if (!roomCell || !roomCell.v) continue;
+    
+    const roomNumberRaw = String(roomCell.v).trim();
+    console.log('Room:', roomNumberRaw);
+    
+    if (roomNumberRaw.includes('chambre') || roomNumberRaw.includes('Total') || roomNumberRaw.includes('H.S.')) {
+      continue;
     }
+    
+    const testNum = parseInt(roomNumberRaw.replace('-', ''));
+    if (isNaN(testNum)) continue;
+    
+    let roomNumber = roomNumberRaw;
+    if (roomNumber.includes('-')) {
+      roomNumber = roomNumber.replace('-', '_');
+    }
+    
+    const room = ROOMS.find(r => 
+      r.number === roomNumberRaw || 
+      r.number === roomNumberRaw.replace('-', '') ||
+      r.number === roomNumber ||
+      r.id === roomNumber ||
+      r.id === roomNumberRaw
+    );
+    
+    if (!room) {
+      console.log('Room not found:', roomNumberRaw);
+      continue;
+    }
+    
+    // Legacy parsing: check columns D (departure) and E (recouche)
+    const isDeparture = depCell && (depCell.v === 'X' || depCell.v === 'D');
+    const isRecouche = recCell && (recCell.v === 'X' || recCell.v === 'R');
+    const isCheckedOut = statusCell && statusCell.v === 'S';
+    
+    let cleaning_status = 'done';
+    let cleaning_type = null;
+    let cleaning_linenChange = false;
+    
+    if (isRecouche) {
+      cleaning_status = 'todo';
+      cleaning_type = 'recouche';
+    } else if (isDeparture) {
+      cleaning_status = 'todo';
+      cleaning_type = 'blanc';
+    } else if (isCheckedOut) {
+      cleaning_status = 'todo';
+      cleaning_type = 'blanc';
+    } else {
+      cleaning_status = 'done';
+      cleaning_type = null;
+    }
+    
+    tasks.push({
+      roomId: room.id,
+      roomNumber: room.number,
+      floor: room.floor,
+      cleaning_type,
+      cleaning_linenChange,
+      cleaning_status,
+      cleaning_assignedTo: null,
+      cleaning_incident: null,
+      cleaning_lateCheckoutTime: null,
+      createdAt: new Date().toISOString()
+    });
   }
   
-  return null;
+  console.log('Total tasks parsed:', tasks.length);
+  return tasks;
 };
 
 // Get tasks that are NOT in the import (these are clean/not occupied)
