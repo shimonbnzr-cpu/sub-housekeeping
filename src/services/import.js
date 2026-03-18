@@ -18,6 +18,22 @@ export const parseMedialogFile = (file) => {
         const worksheet = workbook.Sheets[sheetName];
         console.log('Worksheet range:', worksheet['!ref']);
         
+        // Detect file type from B4
+        const typeCell = worksheet['B4'];
+        const typeStr = typeCell?.v ? String(typeCell.v).toLowerCase() : '';
+        
+        let fileType = null;
+        if (typeStr.includes("état gouvernante") || typeStr.includes("etat gouvernante")) {
+          fileType = 'etat_gouvernante';
+        } else if (typeStr.includes("état des chambres") || typeStr.includes("etat des chambres")) {
+          fileType = 'etat_chambres';
+        }
+        
+        if (!fileType) {
+          reject(new Error("Ce fichier n'est pas reconnu. Veuillez importer un export Medialog valide."));
+          return;
+        }
+        
         // Extract date from B4
         const dateCell = worksheet['B4'];
         let fileDate = new Date();
@@ -25,6 +41,7 @@ export const parseMedialogFile = (file) => {
           const dateStr = String(dateCell.v);
           console.log('Date string:', dateStr);
           // Extract date from "L'état gouvernante du mercredi 26 novembre 2025"
+          // or "L'état des chambres du mercredi 26 novembre 2025"
           const match = dateStr.match(/(\d{1,2})\s+(\w+)\s+(\d{4})/);
           if (match) {
             const months = {
@@ -55,8 +72,8 @@ export const parseMedialogFile = (file) => {
         const fileDateStr = fileDate.toISOString().split('T')[0];
         const dateWarning = fileDateStr !== todayStr ? `⚠️ Attention: la date du fichier (${fileDate.toLocaleDateString()}) est différente d'aujourd'hui` : null;
         
-        // Parse the worksheet directly
-        const tasks = parseMedialogData(worksheet, today);
+        // Parse the worksheet based on detected type
+        const tasks = parseMedialogData(worksheet, today, fileType);
         console.log('Parsed tasks:', tasks);
         resolve({ tasks, fileDate, dateWarning });
       } catch (error) {
@@ -75,36 +92,27 @@ export const getImportedRoomIds = (tasks) => {
   return new Set(tasks.map(t => t.roomId));
 };
 
-// Parse Medialog data - Using worksheet cell references directly
-const parseMedialogData = (worksheet, fileDate) => {
+// Parse Medialog data based on file type
+const parseMedialogData = (worksheet, fileDate, fileType) => {
   const tasks = [];
   const today = fileDate || new Date();
   today.setHours(0, 0, 0, 0);
   
-  console.log('Parsing worksheet with date:', today);
+  console.log('Parsing worksheet with date:', today, 'type:', fileType);
   
   // Parse rows from row 9 onwards (Excel row 9 = data starts here)
-  // We need to iterate through the worksheet range
   const range = XLSX.utils.decode_range(worksheet['!ref'] || 'B9:T1000');
   console.log('Range:', range);
   
-  // Column indices: B=1, C=2, D=3, E=4, K=10, L=11
+  // Column indices: B=1, C=2, D=3, E=4
   const roomCol = 1;  // B
-  const statusCol = 2; // C - "S" = checkout effectué, chambre libérée
-  const depCol = 3;   // D
-  const recCol = 4;   // E
-  const arrCol = 10;  // K
-  const depDateCol = 11; // L
+  const statusCol = 2; // C - Status column
   
   // Start from row 9 (index 8)
   for (let rowIdx = 8; rowIdx <= range.e.r; rowIdx++) {
     // Get cell values directly from worksheet
     const roomCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: roomCol })];
     const statusCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: statusCol })];
-    const depCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: depCol })];
-    const recCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: recCol })];
-    const arrCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: arrCol })];
-    const depDateCell = worksheet[XLSX.utils.encode_cell({ r: rowIdx, c: depDateCol })];
     
     if (!roomCell || !roomCell.v) continue;
     
@@ -140,68 +148,48 @@ const parseMedialogData = (worksheet, fileDate) => {
       continue;
     }
     
-    // Check departure (D column) - "X" means departure
-    const isDeparture = depCell && (depCell.v === 'X' || depCell.v === 'D');
-    // Check recouche (E column) - "X" or "R" means recouche
-    const isRecouche = recCell && (recCell.v === 'X' || recCell.v === 'R');
-    // Check status column (C) - "S" means checkout effectué, chambre libérée
-    const isCheckedOut = statusCell && statusCell.v === 'S';
+    // Get status value from column C
+    const statusValue = statusCell?.v ? String(statusCell.v).trim().toUpperCase() : '';
     
-    // Determine status and type based on import data:
-    // - E non vide → recouche → status todo
-    // - D non vide (et E vide) → blanc → status todo
-    // - C = "S" + D vide + E vide → blanc libérée → status todo
-    // - D et E vides → déjà faite → status done, type null
-    let status = 'todo';
-    let cleaningType = null;
+    // Mapping based on status column (column C):
+    // - "PARTI" → cleaning_type: "blanc", cleaning_status: "todo"
+    // - "DEPART" → cleaning_type: "blanc", cleaning_status: "todo"
+    // - "RECOUCHE" → cleaning_type: "recouche", cleaning_status: "todo"
+    // - "DRAPS" → cleaning_type: "recouche", cleaning_status: "todo", cleaning_linenChange: true
+    // - "LIBRE" → cleaning_status: "done"
+    // - "ARRIVEE" → cleaning_status: "done"
+    // - Empty/not in list → cleaning_status: "done" (absent from export = already clean)
     
-    if (isRecouche) {
-      status = 'todo';
-      cleaningType = 'recouche';
-    } else if (isDeparture) {
-      status = 'todo';
-      cleaningType = 'blanc';
-    } else if (isCheckedOut) {
-      // Column C = "S" + D vide + E vide → checkout effectué, chambre libérée
-      status = 'todo';
-      cleaningType = 'blanc';
-    } else {
-      // D et E vides → déjà faite
-      status = 'done';
-      cleaningType = null;
+    let cleaning_status = 'done'; // Default: done (absent from export = clean)
+    let cleaning_type = null;
+    let cleaning_linenChange = false;
+    
+    if (statusValue === 'PARTI' || statusValue === 'DEPART') {
+      cleaning_status = 'todo';
+      cleaning_type = 'blanc';
+    } else if (statusValue === 'RECOUCHE') {
+      cleaning_status = 'todo';
+      cleaning_type = 'recouche';
+    } else if (statusValue === 'DRAPS') {
+      cleaning_status = 'todo';
+      cleaning_type = 'recouche';
+      cleaning_linenChange = true;
+    } else if (statusValue === 'LIBRE' || statusValue === 'ARRIVEE') {
+      cleaning_status = 'done';
+      cleaning_type = null;
     }
-    
-    // Calculate linen change for recouche
-    let linenChange = false;
-    if (cleaningType === 'recouche' && arrCell && depDateCell) {
-      const arrival = parseExcelDate(arrCell.v);
-      const departure = parseExcelDate(depDateCell.v);
-      
-      if (arrival && departure) {
-        arrival.setHours(0, 0, 0, 0);
-        departure.setHours(0, 0, 0, 0);
-        
-        const nightsStayed = Math.floor((today - arrival) / (1000 * 60 * 60 * 24));
-        const nightsRemaining = Math.floor((departure - today) / (1000 * 60 * 60 * 24));
-        
-        console.log(`Room ${roomNumber}: arrival=${arrival.toISOString()}, departure=${departure.toISOString()}, nightsStayed=${nightsStayed}, nightsRemaining=${nightsRemaining}`);
-        
-        if (nightsStayed >= 3 && nightsRemaining >= 2) {
-          linenChange = true;
-        }
-      }
-    }
+    // Empty or unrecognized → stays as 'done' (absent from export)
     
     tasks.push({
       roomId: room.id,
       roomNumber: room.number,
       floor: room.floor,
-      type: cleaningType,
-      linenChange,
-      status,
-      assignedTo: null,
-      incident: null,
-      lateCheckoutTime: null,
+      cleaning_type,
+      cleaning_linenChange,
+      cleaning_status,
+      cleaning_assignedTo: null,
+      cleaning_incident: null,
+      cleaning_lateCheckoutTime: null,
       createdAt: new Date().toISOString()
     });
   }
