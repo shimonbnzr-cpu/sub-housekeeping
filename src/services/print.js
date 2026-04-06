@@ -28,6 +28,7 @@ const printStyles = `
     
     .sheet-footer { margin-top: 12px; font-size: 12px; 
       font-weight: bold; text-align: right; }
+    .blanc-label { color: #DC2626; font-weight: 600; }
   }
 `;
 
@@ -69,7 +70,7 @@ export const printSheets = (staffList, tasks) => {
           ${tasks.map(t => `
             <tr>
               <td><strong>${t.roomNumber}</strong></td>
-              <td>${t.cleaning_type === 'recouche' ? 'Recouche' : 'À blanc'} ${t.cleaning_linenChange ? '🛏' : ''}</td>
+              <td>${t.cleaning_type === 'recouche' ? 'Recouche' : '<span style="color:red !important;font-weight:bold !important;">À blanc</span>'} ${t.cleaning_linenChange ? '🛏' : ''}</td>
               <td>${t.cleaning_lateCheckoutTime ? '🕐 Late ' + t.cleaning_lateCheckoutTime : ''}</td>
             </tr>
           `).join('')}
