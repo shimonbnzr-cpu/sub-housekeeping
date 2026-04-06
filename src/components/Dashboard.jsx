@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { TimePicker } from 'antd';
+import dayjs from 'dayjs';
 import { useTranslation } from 'react-i18next';
 import { ROOMS, FLOORS, CLEANING_TYPES, STATUS_COLORS } from '../data/rooms';
 import { Card, CardContent } from '@/components/ui/card';
@@ -116,6 +118,22 @@ export default function Dashboard() {
       if (unsubReports) unsubReports();
     };
   }, []);
+
+  // Auto-generate daily report every day at 20:26 (dev test)
+  useEffect(() => {
+    const checkAndGenerateReport = () => {
+      const now = new Date();
+      if (now.getHours() === 16 && now.getMinutes() === 0) {
+        console.log('[Auto-Report] Triggered at', now.toLocaleTimeString(), '| tasks:', tasks.length, '| staff:', staff.length);
+        if (tasks.length > 0 && staff.length > 0) {
+          generateAndSaveReport(tasks, staff);
+        }
+      }
+    };
+
+    const interval = setInterval(checkAndGenerateReport, 60000);
+    return () => clearInterval(interval);
+  }, [tasks, staff]);
 
   // Get present staff only
   const presentStaff = Array.isArray(staff) ? staff.filter(s => s.presentToday) : [];
@@ -359,6 +377,7 @@ export default function Dashboard() {
   };
 
   const handleResetAll = async () => {
+    await generateAndSaveReport(tasks, staff);
     await resetAllTasks(tasks);
     setShowResetConfirm(false);
   };
@@ -526,12 +545,7 @@ export default function Dashboard() {
           <Button variant="outline" size="sm" onClick={() => handlePrint(staff, tasks)}>
             🖨️ Imprimer
           </Button>
-          <Button variant="outline" size="sm" onClick={async () => {
-            if (confirm('Générer le rapport du jour ?')) {
-              await generateAndSaveReport(tasks, staff);
-              alert('Rapport généré !');
-            }
-          }}>
+          <Button variant="outline" size="sm" onClick={() => setShowResetConfirm(true)}>
             📊 Rapport
           </Button>
         </div>
@@ -599,20 +613,22 @@ export default function Dashboard() {
                 <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F3F4F6', padding: '6px 12px', borderRadius: 8 }}>
                   <span style={{ fontWeight: 600 }}>{s.name}</span>
                   <span>{s.done}/{s.assigned}</span>
-                  <input 
-                    type="time"
-                    value={s.shift_start || ''}
-                    onChange={(e) => updateStaffShift(s.id, e.target.value, s.shift_end)}
-                    style={{ padding: '2px 4px', fontSize: 11, borderRadius: 4, border: '1px solid #D1D5DB', width: 70 }}
-                    title="Début"
+                  <TimePicker
+                    value={s.shift_start ? dayjs(s.shift_start, 'HH:mm') : null}
+                    onChange={(val) => updateStaffShift(s.id, val ? val.format('HH:mm') : null, s.shift_end)}
+                    format="HH:mm"
+                    size="small"
+                    style={{ width: 70, fontSize: 11 }}
+                    placeholder="Début"
                   />
                   <span>—</span>
-                  <input 
-                    type="time"
-                    value={s.shift_end || ''}
-                    onChange={(e) => updateStaffShift(s.id, s.shift_start, e.target.value)}
-                    style={{ padding: '2px 4px', fontSize: 11, borderRadius: 4, border: '1px solid #D1D5DB', width: 70 }}
-                    title="Fin"
+                  <TimePicker
+                    value={s.shift_end ? dayjs(s.shift_end, 'HH:mm') : null}
+                    onChange={(val) => updateStaffShift(s.id, s.shift_start, val ? val.format('HH:mm') : null)}
+                    format="HH:mm"
+                    size="small"
+                    style={{ width: 70, fontSize: 11 }}
+                    placeholder="Fin"
                   />
                 </div>
               ))}
@@ -1024,22 +1040,35 @@ export default function Dashboard() {
 
       {/* Reset Confirm */}
       <Dialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
-        <DialogContent>
+        <DialogContent style={{ maxWidth: 440 }}>
           <DialogHeader>
-            <DialogTitle>Réinitialiser</DialogTitle>
-            <DialogDescription>Cette action réinitialise tous les statuts et assignations</DialogDescription>
+            <DialogTitle>Terminer la journée</DialogTitle>
           </DialogHeader>
-            <p>Cette action va réinitialiser toutes les chambres (statuts et assignations).</p>
-            <p>Êtes-vous sûr ?</p>
-            
-            <DialogFooter>
-              <Button variant="destructive" onClick={handleResetAll} disabled={!canReset}>
-                Confirmer
-              </Button>
-              <Button variant="secondary" onClick={() => setShowResetConfirm(false)}>
-                Annuler
-              </Button>
-            </DialogFooter>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ color: '#374151', fontSize: 14, margin: 0 }}>
+              Cette action va générer le rapport du jour et remettre toutes les chambres à zéro pour demain. Cette action est irréversible.
+            </p>
+            {(() => {
+              const notDone = tasks.filter(t => t.cleaning_status !== 'done').length;
+              return notDone > 0 ? (
+                <p style={{ color: '#D97706', fontSize: 13, margin: 0, fontWeight: 500 }}>
+                  ⚠️ {notDone} chambre(s) ne sont pas encore terminées.
+                </p>
+              ) : null;
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setShowResetConfirm(false)}>
+              Annuler
+            </Button>
+            <Button
+              style={{ backgroundColor: '#2563EB', color: '#fff' }}
+              onClick={handleResetAll}
+              disabled={!canReset}
+            >
+              Générer le rapport
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
