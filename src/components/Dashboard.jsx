@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 import { useTranslation } from 'react-i18next';
 import { ROOMS, FLOORS, CLEANING_TYPES, STATUS_COLORS } from '../data/rooms';
 import { Card, CardContent } from '@/components/ui/card';
+import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -64,6 +65,9 @@ export default function Dashboard() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState('planning'); // 'planning' | 'reports'
+  const [showQRCode, setShowQRCode] = useState(false);
+  const token = new URLSearchParams(window.location.search).get('token');
+  const staffUrl = `${window.location.origin}/?mode=staff${token ? '&token=' + token : ''}`;
   const [selectedReport, setSelectedReport] = useState(null);
   const [reports, setReports] = useState([]);
 
@@ -548,6 +552,48 @@ export default function Dashboard() {
           <Button variant="outline" size="sm" onClick={() => setShowResetConfirm(true)}>
             📊 Rapport
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowQRCode(v => !v)}
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            {showQRCode ? '✕ Masquer' : '📱 QR Staff'}
+          </Button>
+          {showQRCode && (
+            <div
+              onClick={() => setShowQRCode(false)}
+              style={{
+                position: 'fixed', inset: 0,
+                background: 'rgba(0,0,0,0.5)',
+                zIndex: 9998,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  background: '#fff',
+                  borderRadius: 16,
+                  padding: '28px 24px',
+                  maxWidth: 360,
+                  width: 'calc(100% - 32px)',
+                  boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+                  textAlign: 'center',
+                  zIndex: 9999,
+                }}
+              >
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Interface femmes de chambre</div>
+                <div style={{ fontSize: 13, color: '#6B7280', marginBottom: 20 }}>Scanner pour accéder à l'interface mobile</div>
+                <div style={{ background: '#fff', padding: 16, borderRadius: 12, border: '1px solid #E5E7EB', display: 'inline-block', marginBottom: 14 }}>
+                  <QRCodeSVG value={staffUrl} size={220} bgColor="#ffffff" fgColor="#111827" level="M" />
+                </div>
+                <div style={{ fontSize: 11, color: '#9CA3AF', fontFamily: 'monospace', wordBreak: 'break-all', background: '#F9FAFB', padding: '6px 10px', borderRadius: 6, border: '1px solid #E5E7EB' }}>{staffUrl}</div>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
