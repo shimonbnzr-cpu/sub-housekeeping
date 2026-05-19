@@ -15,6 +15,7 @@ import {
   postponeTask,
   cancelPostpone,
   setLateCheckout,
+  addIncident,
   getTaskDisplayStatus,
   canModifyTask
 } from '../services/firestore';
@@ -30,9 +31,9 @@ export default function StaffView() {
   const [staff, setStaff] = useState(INITIAL_STAFF);
   const [selectedStaff, setSelectedStaff] = useState('');
   const [loading, setLoading] = useState(true);
-  const [incidentText, setIncidentText] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
   const [showTransfer, setShowTransfer] = useState(false);
+  const [incidentModal, setIncidentModal] = useState(null); // { roomId, roomNumber, text }
 
   // Change language - update both i18n and Firestore
   const changeLanguage = async (lng) => {
@@ -139,9 +140,8 @@ export default function StaffView() {
   };
 
   const handleFinish = async (task) => {
-    await finishTask(task.roomId, incidentText || null);
+    await finishTask(task.roomId, null);
     setSelectedTask(null);
-    setIncidentText('');
   };
 
   const handleDND = async (task) => {
@@ -525,6 +525,16 @@ export default function StaffView() {
                   ⚠️ {task.cleaning_incident}
                 </div>
               )}
+
+              <div className="task-actions" style={{ marginTop: 8 }}>
+                <Button 
+                  variant="secondary" 
+                  size="sm" 
+                  onClick={() => setIncidentModal({ roomId: task.roomId, roomNumber: task.roomNumber, text: '' })}
+                >
+                  ⚠️ {t('reportIssue') || 'Signaler un problème'}
+                </Button>
+              </div>
             </div>
           ))}
         </div>
@@ -582,21 +592,48 @@ export default function StaffView() {
         </Button>
       </div>
 
+      {/* Incident report modal */}
+      <Dialog open={!!incidentModal} onOpenChange={() => setIncidentModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>⚠️ Signaler un problème — Chambre {incidentModal?.roomNumber}</DialogTitle>
+            <DialogDescription>Décrivez le problème constaté.</DialogDescription>
+          </DialogHeader>
+          
+          <textarea
+            className="incident-input"
+            placeholder="Décrivez le problème..."
+            value={incidentModal?.text || ''}
+            onChange={(e) => setIncidentModal(incidentModal ? { ...incidentModal, text: e.target.value } : null)}
+            style={{ width: '100%', minHeight: 100, padding: 10, marginTop: 10 }}
+          />
+          
+          <DialogFooter>
+            <Button 
+              variant="default" 
+              style={{ backgroundColor: "#DC2626" }}
+              onClick={async () => {
+                if (incidentModal?.text?.trim()) {
+                  await addIncident(incidentModal.roomId, incidentModal.text.trim());
+                }
+                setIncidentModal(null);
+              }}
+            >
+              ✅ Confirmer
+            </Button>
+            <Button variant="secondary" onClick={() => setIncidentModal(null)}>
+              {t('cancel')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Finish modal */}
       <Dialog open={!!selectedTask} onOpenChange={() => setSelectedTask(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('finishRoom')} {selectedTask?.roomNumber}</DialogTitle>
-              <DialogDescription>{t('incident')}</DialogDescription>
           </DialogHeader>
-            
-            <textarea
-              className="incident-input"
-              placeholder="Un incident à signaler ? (optionnel)"
-              value={incidentText}
-              onChange={(e) => setIncidentText(e.target.value)}
-              style={{ width: '100%', minHeight: 100, padding: 10, marginTop: 10 }}
-            />
             
             <DialogFooter>
               <Button variant="default" style={{ backgroundColor: "#16A34A" }} onClick={() => handleFinish(selectedTask)}>

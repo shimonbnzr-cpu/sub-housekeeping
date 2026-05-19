@@ -65,6 +65,7 @@ const resources = {
       
       // Modal
       finishRoom: 'Terminer chambre',
+      reportIssue: 'Signaler un problème',
       incident: 'Un incident à signaler ? (optionnel)',
       
       // Team panel
@@ -172,6 +173,7 @@ const resources = {
       
       // Modal
       finishRoom: 'Finish room',
+      reportIssue: 'Report an issue',
       incident: 'Any incident to report? (optional)',
       
       // Team panel
@@ -279,6 +281,7 @@ const resources = {
       
       // Modal
       finishRoom: 'Termină camera',
+      reportIssue: 'Semnalează o problemă',
       incident: 'Incident de raportat? (opțional)',
       
       // Team panel
