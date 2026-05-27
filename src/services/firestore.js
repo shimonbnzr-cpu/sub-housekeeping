@@ -802,7 +802,7 @@ export const subscribeToReport = (date, callback) => {
 };
 
 // Generate and save report for today (called before reset)
-export const generateAndSaveReport = async (tasks, staff) => {
+export const generateAndSaveReport = async (tasks, staff, authorName = null) => {
   const date = getTodayKey();
   
   // Calculate summary using new schema
@@ -890,6 +890,8 @@ export const generateAndSaveReport = async (tasks, staff) => {
   
   const report = {
     date,
+    generatedAt: serverTimestamp(),
+    generatedBy: authorName || null,
     summary: {
       total: tasks.length,
       done: doneTasks.length,

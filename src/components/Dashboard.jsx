@@ -59,6 +59,8 @@ export default function Dashboard() {
   const [dateWarning, setDateWarning] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [reportAuthor, setReportAuthor] = useState(() => localStorage.getItem('reportAuthor') || '');
+  const [showReportAuthorDialog, setShowReportAuthorDialog] = useState(false);
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [newStaffName, setNewStaffName] = useState('');
@@ -380,10 +382,18 @@ export default function Dashboard() {
     clearSelection();
   };
 
-  const handleGenerateReport = async () => {
+  const handleGenerateReport = () => {
+    setShowReportAuthorDialog(true);
+  };
+
+  const confirmGenerateReport = async () => {
+    if (reportAuthor.trim()) {
+      localStorage.setItem('reportAuthor', reportAuthor.trim());
+    }
+    setShowReportAuthorDialog(false);
     console.log('[Report] Generating report with', tasks.length, 'tasks,', staff.length, 'staff');
     try {
-      await generateAndSaveReport(tasks, staff);
+      await generateAndSaveReport(tasks, staff, reportAuthor.trim());
       console.log('[Report] Report generated successfully');
       alert('Rapport généré et sauvegardé.');
     } catch (err) {
@@ -1128,6 +1138,44 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Report Author Dialog */}
+      <Dialog open={showReportAuthorDialog} onOpenChange={setShowReportAuthorDialog}>
+        <DialogContent style={{ maxWidth: 400 }}>
+          <DialogHeader>
+            <DialogTitle>Générer le rapport</DialogTitle>
+          </DialogHeader>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <label style={{ fontSize: 14, color: '#374151' }}>
+              Votre nom :
+              <input
+                type="text"
+                value={reportAuthor}
+                onChange={(e) => setReportAuthor(e.target.value)}
+                placeholder="Ex: Marie, Charles..."
+                autoFocus
+                style={{
+                  width: '100%',
+                  marginTop: 6,
+                  padding: '10px 12px',
+                  border: '1px solid #D1D5DB',
+                  borderRadius: 8,
+                  fontSize: 14,
+                  boxSizing: 'border-box'
+                }}
+              />
+            </label>
+          </div>
+          <DialogFooter style={{ marginTop: 8 }}>
+            <Button variant="secondary" onClick={() => setShowReportAuthorDialog(false)}>
+              Annuler
+            </Button>
+            <Button style={{ backgroundColor: '#2563EB', color: '#fff' }} onClick={confirmGenerateReport}>
+              Générer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1284,6 +1332,13 @@ function ReportDetail({ report, onBack, tasks, staff }) {
             ← {t('cancel')}
           </Button>
           <h2 style={{ fontSize: 24, fontWeight: 700 }}>{formatDate(report.date)}</h2>
+          {(report.generatedBy || report.generatedAt) && (
+            <div style={{ fontSize: 13, color: '#6B7280', marginTop: 4 }}>
+              {report.generatedBy ? `Par ${report.generatedBy}` : ''}
+              {report.generatedBy && report.generatedAt ? ' · ' : ''}
+              {report.generatedAt ? formatTime(report.generatedAt.seconds ? new Date(report.generatedAt.seconds * 1000).toISOString() : report.generatedAt) : ''}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button variant="outline" onClick={handleReportPrint}>
