@@ -380,8 +380,19 @@ export default function Dashboard() {
     clearSelection();
   };
 
+  const handleGenerateReport = async () => {
+    console.log('[Report] Generating report with', tasks.length, 'tasks,', staff.length, 'staff');
+    try {
+      await generateAndSaveReport(tasks, staff);
+      console.log('[Report] Report generated successfully');
+      alert('Rapport généré et sauvegardé.');
+    } catch (err) {
+      console.error('[Report] Error:', err);
+      alert('Erreur lors de la génération: ' + err.message);
+    }
+  };
+
   const handleResetAll = async () => {
-    await generateAndSaveReport(tasks, staff);
     await resetAllTasks(tasks);
     setShowResetConfirm(false);
   };
@@ -549,7 +560,7 @@ export default function Dashboard() {
           <Button variant="outline" size="sm" onClick={() => handlePrint(staff, tasks)}>
             🖨️ Imprimer
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setShowResetConfirm(true)}>
+          <Button variant="outline" size="sm" onClick={() => handleGenerateReport()}>
             📊 Rapport
           </Button>
           <Button
@@ -1092,7 +1103,7 @@ export default function Dashboard() {
           </DialogHeader>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p style={{ color: '#374151', fontSize: 14, margin: 0 }}>
-              Cette action va générer le rapport du jour et remettre toutes les chambres à zéro pour demain. Cette action est irréversible.
+              Cette action va réinitialiser toutes les chambres (statuts et assignations) pour demain. Les DND et incidents seront effacés. Cette action est irréversible.
             </p>
             {(() => {
               const notDone = tasks.filter(t => t.cleaning_status !== 'done').length;
@@ -1112,7 +1123,7 @@ export default function Dashboard() {
               onClick={handleResetAll}
               disabled={!canReset}
             >
-              Générer le rapport
+              Réinitialiser
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1127,7 +1138,47 @@ export default function Dashboard() {
 
 function ReportsList({ reports, onSelect }) {
   const { t, i18n } = useTranslation();
-  
+  const [openMonths, setOpenMonths] = useState({});
+
+  // Group reports by year/month
+  const groupedReports = reports.reduce((acc, report) => {
+    const date = new Date(report.date);
+    const year = date.getFullYear();
+    const month = date.getMonth(); // 0-11
+    const key = `${year}-${month}`;
+    if (!acc[key]) {
+      acc[key] = {
+        year,
+        month,
+        label: date.toLocaleDateString(i18n.language === 'fr' ? 'fr-FR' : i18n.language === 'ro' ? 'ro-RO' : 'en-EN', { month: 'long', year: 'numeric' }),
+        reports: []
+      };
+    }
+    acc[key].reports.push(report);
+    return acc;
+  }, {});
+
+  // Sort groups: most recent first, current month open by default
+  const sortedGroups = Object.values(groupedReports).sort((a, b) => {
+    if (a.year !== b.year) return b.year - a.year;
+    return b.month - a.month;
+  });
+
+  // Initialize openMonths: current month open by default
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth();
+  const initialOpen = {};
+  sortedGroups.forEach(g => {
+    initialOpen[`${g.year}-${g.month}`] = g.year === currentYear && g.month === currentMonth;
+  });
+
+  // Use state only on first render, then let user toggle
+  const [localOpenMonths, setLocalOpenMonths] = useState(initialOpen);
+
+  const toggleMonth = (key) => {
+    setLocalOpenMonths(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const formatDate = (dateStr) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString(i18n.language === 'ro' ? 'ro-RO' : i18n.language === 'en' ? 'en-EN' : 'fr-FR', {
@@ -1137,7 +1188,7 @@ function ReportsList({ reports, onSelect }) {
       day: 'numeric'
     });
   };
-  
+
   if (reports.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: 40, color: '#6B7280' }}>
@@ -1145,28 +1196,53 @@ function ReportsList({ reports, onSelect }) {
       </div>
     );
   }
-  
+
   return (
     <div className="reports-list">
-      {reports.map(report => (
-        <div
-          key={report.id}
-          onClick={() => onSelect(report)}
-          style={{
-            padding: '16px',
-            borderBottom: '1px solid #E5E7EB',
-            cursor: 'pointer',
-            background: '#fff'
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            {formatDate(report.date)}
+      {sortedGroups.map(group => {
+        const key = `${group.year}-${group.month}`;
+        const isOpen = localOpenMonths[key] !== undefined ? localOpenMonths[key] : true;
+        return (
+          <div key={key} style={{ marginBottom: 8 }}>
+            <div
+              onClick={() => toggleMonth(key)}
+              style={{
+                padding: '12px 16px',
+                background: '#F3F4F6',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontWeight: 600,
+                fontSize: 14,
+                textTransform: 'capitalize'
+              }}
+            >
+              <span>{group.label}</span>
+              <span style={{ color: '#9CA3AF' }}>{isOpen ? '▲' : '▼'}</span>
+            </div>
+            {isOpen && group.reports.map(report => (
+              <div
+                key={report.id}
+                onClick={() => onSelect(report)}
+                style={{
+                  padding: '14px 16px',
+                  borderBottom: '1px solid #E5E7EB',
+                  cursor: 'pointer',
+                  background: '#fff'
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  {formatDate(report.date)}
+                </div>
+                <div style={{ fontSize: 13, color: '#6B7280' }}>
+                  {report.summary?.done || 0}/{report.summary?.total || 0} {t('done')} · {report.incidents?.length || 0} incident(s) · {report.summary?.postponed || 0} reportée(s)
+                </div>
+              </div>
+            ))}
           </div>
-          <div style={{ fontSize: 14, color: '#6B7280' }}>
-            {report.summary?.done || 0}/{report.summary?.total || 0} {t('done')} · {report.incidents?.length || 0} {t('incidents') || 'incident(s)'} · {report.summary?.postponed || 0} {t('postponed') || 'reportée(s)'}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
