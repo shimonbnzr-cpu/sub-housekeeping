@@ -26,6 +26,7 @@ import {
   resetAllTasks,
   ensureAllRoomsHaveTasks,
   deleteTask,
+  resetTaskToTodo,
   setStaff as saveStaffToFirestore,
   deleteStaff,
   subscribeToReports,
@@ -66,6 +67,7 @@ export default function Dashboard() {
   const [newStaffName, setNewStaffName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState('planning'); // 'planning' | 'reports'
   const [showQRCode, setShowQRCode] = useState(false);
   const token = new URLSearchParams(window.location.search).get('token');
@@ -84,11 +86,8 @@ export default function Dashboard() {
 
   // Subscribe to realtime updates
   useEffect(() => {
-    // Load saved language
-    const savedLang = localStorage.getItem('language');
-    if (savedLang && ['fr', 'en', 'ro'].includes(savedLang)) {
-      i18n.changeLanguage(savedLang);
-    }
+    // Force French for Dashboard
+    i18n.changeLanguage('fr');
 
     let unsubStaff;
     
@@ -125,11 +124,17 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Auto-generate daily report every day at 20:26 (dev test)
+  // Auto-generate daily report every day at 16:00 (dev test)
   useEffect(() => {
     const checkAndGenerateReport = () => {
       const now = new Date();
       if (now.getHours() === 16 && now.getMinutes() === 0) {
+        const todayKey = new Date().toISOString().split('T')[0];
+        const alreadyGenerated = reports.some(r => r.id === todayKey);
+        if (alreadyGenerated) {
+          console.log('[Auto-Report] Report already exists for today, skipping auto-generation.');
+          return;
+        }
         console.log('[Auto-Report] Triggered at', now.toLocaleTimeString(), '| tasks:', tasks.length, '| staff:', staff.length);
         if (tasks.length > 0 && staff.length > 0) {
           generateAndSaveReport(tasks, staff);
@@ -139,7 +144,7 @@ export default function Dashboard() {
 
     const interval = setInterval(checkAndGenerateReport, 60000);
     return () => clearInterval(interval);
-  }, [tasks, staff]);
+  }, [tasks, staff, reports]);
 
   // Get present staff only
   const presentStaff = Array.isArray(staff) ? staff.filter(s => s.presentToday) : [];
@@ -188,11 +193,6 @@ export default function Dashboard() {
   const isDraggingRef = useRef(false);
 
   const handleRoomMouseDown = (room, e) => {
-    const task = getTaskForRoom(room);
-    if (task && (task.status === 'in_progress' || task.status === 'done' || task.status === 'ready')) {
-      return;
-    }
-    
     // Start drag timer (150ms)
     dragTimerRef.current = setTimeout(() => {
       isDraggingRef.current = true;
@@ -208,16 +208,13 @@ export default function Dashboard() {
       dragTimerRef.current = null;
       
       // Toggle selection on click
-      const task = getTaskForRoom(room);
-      if (!task || (task.status !== 'in_progress' && task.status !== 'done')) {
-        const newSelection = new Set(selectedRooms);
-        if (newSelection.has(room.id)) {
-          newSelection.delete(room.id);
-        } else {
-          newSelection.add(room.id);
-        }
-        setSelectedRooms(newSelection);
+      const newSelection = new Set(selectedRooms);
+      if (newSelection.has(room.id)) {
+        newSelection.delete(room.id);
+      } else {
+        newSelection.add(room.id);
       }
+      setSelectedRooms(newSelection);
     }
     isDraggingRef.current = false;
     setIsDragging(false);
@@ -225,10 +222,6 @@ export default function Dashboard() {
 
   const handleRoomMouseEnter = (room) => {
     if (isDragging) {
-      const task = getTaskForRoom(room);
-      if (task && (task.status === 'in_progress' || task.status === 'done' || task.status === 'ready')) {
-        return;
-      }
       setSelectedRooms(prev => new Set([...prev, room.id]));
     }
   };
@@ -357,11 +350,22 @@ export default function Dashboard() {
     clearSelection();
   };
 
+  const handleUnlock = async () => {
+    if (selectedRooms.size === 0) return;
+    
+    for (const roomId of selectedRooms) {
+      await resetTaskToTodo(roomId);
+    }
+    setShowUnlockConfirm(false);
+    clearSelection();
+  };
+
   // Marquer comme terminé depuis la réception
   const handleFinishFromReception = async () => {
     if (selectedRooms.size === 0) return;
     
     for (const roomId of selectedRooms) {
+      await ensureTaskExists(roomId);
       await updateTaskStatus(roomId, 'done');
     }
     setShowFinishConfirm(false);
@@ -499,6 +503,10 @@ export default function Dashboard() {
   const canModifySelected = Array.from(selectedRooms).some(roomId => canChangeAssignment(roomId));
   const canChangeTypeForSelected = Array.from(selectedRooms).some(roomId => canChangeStatus(roomId));
   const canChangeLateCheckoutForSelected = Array.from(selectedRooms).some(roomId => canChangeLateCheckout(roomId));
+  const hasLockedSelected = Array.from(selectedRooms).some(roomId => {
+    const task = getTaskForRoom(ROOMS.find(r => r.id === roomId));
+    return task && (task.cleaning_status === 'done' || task.cleaning_status === 'in_progress');
+  });
 
   // Check if auto-assign is allowed (only if there are todo or ready tasks with no skip reason)
   const canAutoAssign = tasks.some(t => (t.cleaning_status === 'todo' ) && t.cleaning_skip_reason === null);
@@ -531,7 +539,6 @@ export default function Dashboard() {
     if (isSelected) {
       borderColor = '#2563EB';
       borderWidth = 3;
-      bgColor = '#EFF6FF'; // light blue background
     }
     
     return {
@@ -884,7 +891,17 @@ export default function Dashboard() {
                 </div>
               </div>
               
-              <div className="action-group">
+              <div className="action-group" style={{ display: 'flex', gap: 8 }}>
+                {hasLockedSelected && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setShowUnlockConfirm(true)}
+                    style={{ borderColor: '#EA580C', color: '#EA580C' }}
+                  >
+                    🔓 Remettre à faire
+                  </Button>
+                )}
                 <Button variant="destructive" size="sm" onClick={handleDelete} disabled={!canModifySelected}>
                   Supprimer
                 </Button>
@@ -1172,6 +1189,34 @@ export default function Dashboard() {
             </Button>
             <Button style={{ backgroundColor: '#2563EB', color: '#fff' }} onClick={confirmGenerateReport}>
               Générer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Unlock Confirm Dialog */}
+      <Dialog open={showUnlockConfirm} onOpenChange={setShowUnlockConfirm}>
+        <DialogContent style={{ maxWidth: 440 }}>
+          <DialogHeader>
+            <DialogTitle>Déverrouiller les chambres</DialogTitle>
+          </DialogHeader>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ color: '#374151', fontSize: 14, margin: 0 }}>
+              Remettre les {selectedRooms.size} chambre(s) sélectionnée(s) à l'état "À faire" ?
+            </p>
+            <p style={{ fontSize: 13, color: '#6B7280', margin: 0 }}>
+              Cela va annuler leur statut actuel (terminé ou en cours) et effacer les heures de début/fin de nettoyage, vous permettant de les réassigner ou de modifier leur type. Les femmes de chambre assignées actuelles seront conservées.
+            </p>
+          </div>
+          <DialogFooter style={{ marginTop: 8 }}>
+            <Button variant="secondary" onClick={() => setShowUnlockConfirm(false)}>
+              Annuler
+            </Button>
+            <Button
+              style={{ backgroundColor: '#EA580C', color: '#fff' }}
+              onClick={handleUnlock}
+            >
+              🔓 Confirmer
             </Button>
           </DialogFooter>
         </DialogContent>

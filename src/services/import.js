@@ -10,7 +10,7 @@ export const parseMedialogFile = (file) => {
       try {
         console.log('Reading file...');
         const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
         console.log('Workbook sheets:', workbook.SheetNames);
         
         // Get first sheet
@@ -144,15 +144,16 @@ const parseEtatChambres = (worksheet, fileDate) => {
       roomNumber = roomNumber.replace('-', '_');
     }
     
-    const room = ROOMS.find(r => 
+    const matchingRooms = ROOMS.filter(r => 
       r.number === roomNumberRaw || 
       r.number === roomNumberRaw.replace('-', '') ||
       r.number === roomNumber ||
       r.id === roomNumber ||
-      r.id === roomNumberRaw
+      r.id === roomNumberRaw ||
+      (r.type === 'dorm' && (r.number.startsWith(roomNumberRaw + '-') || r.id.startsWith(roomNumberRaw + '-')))
     );
     
-    if (!room) {
+    if (matchingRooms.length === 0) {
       console.log('Room not found:', roomNumberRaw);
       continue;
     }
@@ -210,18 +211,20 @@ const parseEtatChambres = (worksheet, fileDate) => {
       }
     }
     
-    tasks.push({
-      roomId: room.id,
-      roomNumber: room.number,
-      floor: room.floor,
-      cleaning_type,
-      cleaning_linenChange,
-      cleaning_status,
-      cleaning_assignedTo: null,
-      cleaning_incident: null,
-      cleaning_lateCheckoutTime: null,
-      createdAt: new Date().toISOString()
-    });
+    for (const room of matchingRooms) {
+      tasks.push({
+        roomId: room.id,
+        roomNumber: room.number,
+        floor: room.floor,
+        cleaning_type,
+        cleaning_linenChange,
+        cleaning_status,
+        cleaning_assignedTo: null,
+        cleaning_incident: null,
+        cleaning_lateCheckoutTime: null,
+        createdAt: new Date().toISOString()
+      });
+    }
   }
   
   console.log('Total tasks parsed:', tasks.length);
@@ -269,15 +272,16 @@ const parseEtatGouvernante = (worksheet, fileDate) => {
       roomNumber = roomNumber.replace('-', '_');
     }
     
-    const room = ROOMS.find(r => 
+    const matchingRooms = ROOMS.filter(r => 
       r.number === roomNumberRaw || 
       r.number === roomNumberRaw.replace('-', '') ||
       r.number === roomNumber ||
       r.id === roomNumber ||
-      r.id === roomNumberRaw
+      r.id === roomNumberRaw ||
+      (r.type === 'dorm' && (r.number.startsWith(roomNumberRaw + '-') || r.id.startsWith(roomNumberRaw + '-')))
     );
     
-    if (!room) {
+    if (matchingRooms.length === 0) {
       console.log('Room not found:', roomNumberRaw);
       continue;
     }
@@ -305,18 +309,20 @@ const parseEtatGouvernante = (worksheet, fileDate) => {
       cleaning_type = null;
     }
     
-    tasks.push({
-      roomId: room.id,
-      roomNumber: room.number,
-      floor: room.floor,
-      cleaning_type,
-      cleaning_linenChange,
-      cleaning_status,
-      cleaning_assignedTo: null,
-      cleaning_incident: null,
-      cleaning_lateCheckoutTime: null,
-      createdAt: new Date().toISOString()
-    });
+    for (const room of matchingRooms) {
+      tasks.push({
+        roomId: room.id,
+        roomNumber: room.number,
+        floor: room.floor,
+        cleaning_type,
+        cleaning_linenChange,
+        cleaning_status,
+        cleaning_assignedTo: null,
+        cleaning_incident: null,
+        cleaning_lateCheckoutTime: null,
+        createdAt: new Date().toISOString()
+      });
+    }
   }
   
   console.log('Total tasks parsed:', tasks.length);

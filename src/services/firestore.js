@@ -843,6 +843,7 @@ export const generateAndSaveReport = async (tasks, staff, authorName = null) => 
     const staffIncidents = staffTasks.filter(t => t.cleaning_incident && t.cleaning_incident !== 'Ne pas déranger');
     
     return {
+      id: s.id,
       name: s.name,
       done: staffDone.length,
       blanc: staffBlanc.length,
@@ -953,4 +954,18 @@ export const canModifyTask = (task) => {
   if (!task) return true;
   const status = task.cleaning_status || 'todo';
   return status !== 'in_progress' && status !== 'done';
+};
+
+// Reset a task back to todo status (unlocked)
+export const resetTaskToTodo = async (roomId) => {
+  const date = getTodayKey();
+  const taskRef = doc(getTasksCollection(date), roomId);
+  await updateDoc(taskRef, {
+    cleaning_status: 'todo',
+    cleaning_skip_reason: null,
+    cleaning_freed: false,
+    cleaning_startedAt: null,
+    cleaning_completedAt: null,
+    updatedAt: serverTimestamp()
+  });
 };

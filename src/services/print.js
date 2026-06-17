@@ -195,16 +195,24 @@ export const printReport = (report) => {
         <div style="margin-bottom: 20px;">
           <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Incidents (${report.incidents.length})</h3>
           <ul style="font-size: 12px;">
-            ${report.incidents.map(i => `<li>${i.roomNumber}: ${i.description || 'Problème'}</li>`).join('')}
+            ${report.incidents.map(i => `<li>${i.roomNumber}: ${i.text || 'Problème'}</li>`).join('')}
           </ul>
         </div>
       ` : ''}
 
       <!-- Chambres reportées -->
-      ${(report.postponedRooms || []).length > 0 ? `
+      ${(report.postponed || []).length > 0 ? `
         <div style="margin-bottom: 20px;">
-          <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Chambres reportées (${report.postponedRooms.length})</h3>
-          <p style="font-size: 12px;">${report.postponedRooms.map(r => r.roomNumber).join(', ')}</p>
+          <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Chambres reportées (${report.postponed.length})</h3>
+          <p style="font-size: 12px;">${report.postponed.map(r => `${r.roomNumber} (${r.assignedTo})`).join(', ')}</p>
+        </div>
+      ` : ''}
+
+      <!-- Chambres DND -->
+      ${(report.dnd || []).length > 0 ? `
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 14px; border-bottom: 1px solid #000; margin-bottom: 8px;">Chambres DND (${report.dnd.length})</h3>
+          <p style="font-size: 12px;">${report.dnd.map(r => `${r.roomNumber} (${r.assignedTo})`).join(', ')}</p>
         </div>
       ` : ''}
 
@@ -223,23 +231,35 @@ export const printReport = (report) => {
             </tr>
           </thead>
           <tbody>
-            ${sortedTasks.map(t => `
-              <tr>
-                <td><strong>${t.roomNumber}</strong></td>
-                <td>${t.assignedTo || '-'}</td>
-                <td>${t.type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
-                <td>${t.status === 'done' ? 'Terminée' : 
-                t.status === 'in_progress' ? 'En cours' : 
-                t.status === 'todo' ? 'À faire' : 
-                t.status === 'dnd' ? 'DND' : 
-                t.status === 'postponed' ? 'Reportée' : 
-                t.status === 'freed' ? 'Libérée' : 
-                t.status === 'late_checkout' ? 'Late checkout' : 
-                t.status}</td>
-                <td>${t.cleaning_startedAt ? formatTime(t.cleaning_startedAt) : '-'}</td>
-                <td>${t.cleaning_completedAt ? formatTime(t.cleaning_completedAt) : '-'}</td>
-              </tr>
-            `).join('')}
+            ${sortedTasks.map(t => {
+              const staffMember = (report.byStaff || []).find(s => s.id === t.cleaning_assignedTo);
+              const assignedName = staffMember ? staffMember.name : (t.cleaning_assignedTo || '-');
+              const displayStatus = t.cleaning_status === 'done' ? 'done' : 
+                (t.cleaning_status === 'in_progress' ? 'in_progress' : 
+                (t.cleaning_skip_reason === 'dnd' ? 'dnd' : 
+                (t.cleaning_skip_reason === 'postponed' ? 'postponed' : 
+                (t.cleaning_freed ? 'freed' :
+                (t.cleaning_lateCheckoutTime ? 'late_checkout' : 'todo')))));
+              let statusLabel = '';
+              if (displayStatus === 'done') statusLabel = 'Terminée';
+              else if (displayStatus === 'in_progress') statusLabel = 'En cours';
+              else if (displayStatus === 'dnd') statusLabel = 'DND';
+              else if (displayStatus === 'postponed') statusLabel = 'Reportée';
+              else if (displayStatus === 'freed') statusLabel = 'Libérée';
+              else if (displayStatus === 'late_checkout') statusLabel = 'Late checkout';
+              else statusLabel = 'À faire';
+
+              return `
+                <tr>
+                  <td><strong>${t.roomNumber}</strong></td>
+                  <td>${assignedName}</td>
+                  <td>${t.cleaning_type === 'recouche' ? 'Recouche' : 'Blanc'}</td>
+                  <td>${statusLabel}</td>
+                  <td>${t.cleaning_startedAt ? formatTime(t.cleaning_startedAt) : '-'}</td>
+                  <td>${t.cleaning_completedAt ? formatTime(t.cleaning_completedAt) : '-'}</td>
+                </tr>
+              `;
+            }).join('')}
           </tbody>
         </table>
       </div>

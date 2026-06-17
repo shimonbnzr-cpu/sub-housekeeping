@@ -29,7 +29,9 @@ export default function StaffView() {
   const { t, i18n } = useTranslation();
   const [tasks, setTasks] = useState([]);
   const [staff, setStaff] = useState(INITIAL_STAFF);
-  const [selectedStaff, setSelectedStaff] = useState('');
+  const [selectedStaff, setSelectedStaff] = useState(() => {
+    return localStorage.getItem('selectedStaff') || '';
+  });
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState(null);
   const [showTransfer, setShowTransfer] = useState(false);
@@ -193,7 +195,10 @@ export default function StaffView() {
               {presentStaff.map(s => (
                 <DropdownMenuItem 
                   key={s.id} 
-                  onClick={() => setSelectedStaff(s.id)}
+                  onClick={() => {
+                    setSelectedStaff(s.id);
+                    localStorage.setItem('selectedStaff', s.id);
+                  }}
                   style={{ padding: '12px 16px', fontSize: '16px', cursor: 'pointer' }}
                 >
                   {s.name}
@@ -586,7 +591,10 @@ export default function StaffView() {
       <div className="staff-footer">
         <Button 
           variant="secondary"
-          onClick={() => setSelectedStaff('')}
+          onClick={() => {
+            setSelectedStaff('');
+            localStorage.removeItem('selectedStaff');
+          }}
         >
           {t('changeName')}
         </Button>
