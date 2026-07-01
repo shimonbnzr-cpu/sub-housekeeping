@@ -24,6 +24,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { analytics } from '../services/analytics';
 
 export default function StaffView() {
   const { t, i18n } = useTranslation();
@@ -139,10 +140,29 @@ export default function StaffView() {
 
   const handleStart = async (task) => {
     await startTask(task.roomId);
+    analytics.track('cleaning_started', {
+      roomId: task.roomId,
+      roomNumber: task.roomNumber,
+      type: task.cleaning_type,
+      staffId: selectedStaff
+    });
   };
 
   const handleFinish = async (task) => {
     await finishTask(task.roomId, null);
+    
+    // Calculate cleaning duration
+    const startVal = task.cleaning_startedAt?.toDate ? task.cleaning_startedAt.toDate() : (task.cleaning_startedAt ? new Date(task.cleaning_startedAt) : null);
+    const durationSec = startVal && !isNaN(startVal.getTime()) ? Math.round((new Date() - startVal) / 1000) : 0;
+    
+    analytics.track('cleaning_completed', {
+      roomId: task.roomId,
+      roomNumber: task.roomNumber,
+      type: task.cleaning_type,
+      staffId: selectedStaff,
+      duration_seconds: durationSec
+    });
+    
     setSelectedTask(null);
   };
 
@@ -151,10 +171,22 @@ export default function StaffView() {
       ? task.cleaning_incident 
       : 'Ne pas déranger';
     await markAsDND(task.roomId, newIncident);
+    analytics.track('room_skipped', {
+      roomId: task.roomId,
+      roomNumber: task.roomNumber,
+      reason: 'dnd',
+      staffId: selectedStaff
+    });
   };
 
   const handlePostpone = async (task) => {
     await postponeTask(task.roomId);
+    analytics.track('room_skipped', {
+      roomId: task.roomId,
+      roomNumber: task.roomNumber,
+      reason: 'postponed',
+      staffId: selectedStaff
+    });
   };
 
   // Cancel DND and go back to todo
@@ -622,7 +654,14 @@ export default function StaffView() {
               style={{ backgroundColor: "#DC2626" }}
               onClick={async () => {
                 if (incidentModal?.text?.trim()) {
-                  await addIncident(incidentModal.roomId, incidentModal.text.trim());
+                  const txt = incidentModal.text.trim();
+                  await addIncident(incidentModal.roomId, txt);
+                  analytics.track('incident_reported', {
+                    roomId: incidentModal.roomId,
+                    roomNumber: incidentModal.roomNumber,
+                    staffId: selectedStaff,
+                    text: txt
+                  });
                 }
                 setIncidentModal(null);
               }}

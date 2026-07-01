@@ -45,6 +45,8 @@ import {
 } from '../services/firestore';
 import { handlePrint, printSheets, printReport } from '../services/print';
 import { parseMedialogFile } from '../services/import';
+import { analytics } from '../services/analytics';
+import StatisticsView from './StatisticsView';
 
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
@@ -356,6 +358,7 @@ export default function Dashboard() {
     for (const roomId of selectedRooms) {
       await resetTaskToTodo(roomId);
     }
+    analytics.track('room_reset', { rooms_count: selectedRooms.size });
     setShowUnlockConfirm(false);
     clearSelection();
   };
@@ -398,6 +401,7 @@ export default function Dashboard() {
     console.log('[Report] Generating report with', tasks.length, 'tasks,', staff.length, 'staff');
     try {
       await generateAndSaveReport(tasks, staff, reportAuthor.trim());
+      analytics.track('report_generated', { author: reportAuthor.trim(), tasks_count: tasks.length });
       console.log('[Report] Report generated successfully');
       alert('Rapport généré et sauvegardé.');
     } catch (err) {
@@ -415,6 +419,10 @@ export default function Dashboard() {
     // Get tasks that are not done, not ready, not in_progress, not skipped
     const tasksToAssign = tasks.filter(t => (t.cleaning_status === 'todo' ) && t.cleaning_skip_reason === null);
     await autoAssignTasks(tasksToAssign, staff);
+    analytics.track('auto_assignment_triggered', {
+      rooms_count: tasksToAssign.length,
+      staff_count: staff.filter(s => s.isPresent).length
+    });
   };
 
   // Import handlers
@@ -464,6 +472,11 @@ export default function Dashboard() {
       for (const room of roomsToMarkDone) {
         await updateTaskStatus(room.roomId, 'done');
       }
+      
+      analytics.track('medialog_import_completed', {
+        rooms_count: importedTasks.length,
+        date: importedFileDate
+      });
     } catch (error) {
       console.error('Import error:', error);
       alert('Erreur lors de l\'import: ' + error.message);
@@ -651,10 +664,25 @@ export default function Dashboard() {
             color: activeTab === 'reports' ? 'white' : '#6B7280',
             fontWeight: 600,
             cursor: 'pointer',
-            borderRadius: '8px 8px 0 0'
+            borderRadius: '8px 8px 0 0',
+            marginRight: 4
           }}
         >
           {t('reports')}
+        </button>
+        <button
+          onClick={() => setActiveTab('statistics')}
+          style={{
+            padding: '12px 24px',
+            border: 'none',
+            background: activeTab === 'statistics' ? '#3B82F6' : 'transparent',
+            color: activeTab === 'statistics' ? 'white' : '#6B7280',
+            fontWeight: 600,
+            cursor: 'pointer',
+            borderRadius: '8px 8px 0 0'
+          }}
+        >
+          Statistiques 📊
         </button>
       </div>
 
@@ -910,6 +938,11 @@ export default function Dashboard() {
           </div>
         )}
         </div>
+        )}
+
+        {/* Statistics Tab */}
+        {activeTab === 'statistics' && (
+          <StatisticsView tasks={tasks} staff={staff} reports={reports} />
         )}
       </main>
 
