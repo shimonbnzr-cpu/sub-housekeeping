@@ -44,37 +44,6 @@ const getShiftHours = (startStr, endStr) => {
   return (end - start) / 60;
 };
 
-// Helper to check if a date falls within the selected period
-const isInRange = (dateStr, range) => {
-  const now = new Date();
-  const todayStr = now.toLocaleDateString('fr-CA'); // YYYY-MM-DD
-  
-  if (range === 'today') return dateStr === todayStr;
-
-  if (range === 'week') {
-    // Get Monday of current week
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(now.setDate(diff));
-    monday.setHours(0, 0, 0, 0);
-    
-    const itemDate = new Date(dateStr + 'T00:00:00');
-    return itemDate >= monday;
-  }
-  
-  if (range === 'month') {
-    const itemDate = new Date(dateStr + 'T00:00:00');
-    return itemDate.getFullYear() === now.getFullYear() && itemDate.getMonth() === now.getMonth();
-  }
-  
-  if (range === 'year') {
-    const itemDate = new Date(dateStr + 'T00:00:00');
-    return itemDate.getFullYear() === now.getFullYear();
-  }
-  
-  return true; // 'all'
-};
-
 // Compiles today's in-memory active tasks into a daily summary layout matching the reports collection schema
 const compileTodaySummary = (tasks, staff) => {
   const todayStr = new Date().toLocaleDateString('fr-CA');
@@ -125,21 +94,85 @@ const compileTodaySummary = (tasks, staff) => {
 
 export default function StatisticsView({ tasks = [], staff = [], reports = [] }) {
   const { t } = useTranslation();
-  const [period, setPeriod] = useState('week'); // 'today' | 'week' | 'month' | 'year' | 'all'
+  const [period, setPeriod] = useState('week'); // 'today' | 'week' | 'month' | 'year' | 'custom' | 'all'
+  
+  // Lock state with sessionStorage persistence
+  const [password, setPassword] = useState('');
+  const [isUnlocked, setIsUnlocked] = useState(() => sessionStorage.getItem('stats_unlocked') === 'true');
+  const [passwordError, setPasswordError] = useState('');
+
+  // Date range picker states
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    // Default to Monday of current week
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.setDate(diff));
+    return monday.toLocaleDateString('fr-CA'); // YYYY-MM-DD
+  });
+
+  const [customEndDate, setCustomEndDate] = useState(() => {
+    return new Date().toLocaleDateString('fr-CA'); // YYYY-MM-DD
+  });
+
+  const handleUnlockSubmit = (e) => {
+    e.preventDefault();
+    if (password === '120120') {
+      sessionStorage.setItem('stats_unlocked', 'true');
+      setIsUnlocked(true);
+      setPasswordError('');
+    } else {
+      setPasswordError('Code d\'accès incorrect');
+    }
+  };
 
   // --- Core Calculations Engine ---
   const stats = useMemo(() => {
-    // 1. Compile today's live summary and merge with historical reports
+    // 1. Helper to check if a date falls within the selected period (accesses states inside useMemo)
+    const checkInRange = (dateStr) => {
+      const now = new Date();
+      const todayStr = now.toLocaleDateString('fr-CA'); // YYYY-MM-DD
+      
+      if (period === 'today') return dateStr === todayStr;
+
+      if (period === 'week') {
+        const day = now.getDay();
+        const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+        const monday = new Date(now.setDate(diff));
+        monday.setHours(0, 0, 0, 0);
+        
+        const itemDate = new Date(dateStr + 'T00:00:00');
+        return itemDate >= monday;
+      }
+      
+      if (period === 'month') {
+        const itemDate = new Date(dateStr + 'T00:00:00');
+        return itemDate.getFullYear() === now.getFullYear() && itemDate.getMonth() === now.getMonth();
+      }
+      
+      if (period === 'year') {
+        const itemDate = new Date(dateStr + 'T00:00:00');
+        return itemDate.getFullYear() === now.getFullYear();
+      }
+
+      if (period === 'custom') {
+        return dateStr >= customStartDate && dateStr <= customEndDate;
+      }
+      
+      return true; // 'all'
+    };
+
+    // 2. Compile today's live summary and merge with historical reports
     const todaySummary = compileTodaySummary(tasks, staff);
     const combinedSummaries = [
       ...reports.filter(r => r.date !== todaySummary.date),
       todaySummary
     ];
 
-    // 2. Filter summaries in the active date period
-    const filteredSummaries = combinedSummaries.filter(s => isInRange(s.date, period));
+    // 3. Filter summaries in the active date period
+    const filteredSummaries = combinedSummaries.filter(s => checkInRange(s.date));
 
-    // 3. Extract and parse all completed tasks details across the period
+    // 4. Extract and parse all completed tasks details across the period
     const completedTasksList = [];
     const suspectValidations = [];
     
@@ -193,7 +226,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       return b.time.localeCompare(a.time);
     });
 
-    // 4. Calculate individual metrics for ALL staff members
+    // 5. Calculate individual metrics for ALL staff members
     const staffStats = staff.map(s => {
       let daysWorked = 0;
       let totalShiftHours = 0;
@@ -269,7 +302,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       };
     });
 
-    // 5. Global aggregated metrics
+    // 6. Global aggregated metrics
     const totalRooms = staffStats.reduce((sum, s) => sum + s.roomsCleaned, 0);
     const totalWorkedDays = staffStats.reduce((sum, s) => sum + s.daysWorked, 0);
     const totalShiftHours = staffStats.reduce((sum, s) => sum + s.totalShiftHours, 0);
@@ -287,7 +320,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
     const globalRoomsPerHour = totalShiftHours > 0 ? Math.round((totalRooms / totalShiftHours) * 10) / 10 : 0;
 
-    // 6. Timelines of completions by hour of the day
+    // 7. Timelines of completions by hour of the day
     const hourlyBins = Array.from({ length: 10 }, (_, i) => {
       const hour = 8 + i; // 8h to 17h
       return {
@@ -307,7 +340,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       }
     });
 
-    // 7. Leaderboard Podium sorting
+    // 8. Leaderboard Podium sorting
     const podiumVolume = [...staffStats].sort((a, b) => b.roomsCleaned - a.roomsCleaned).slice(0, 3);
     const podiumSpeed = [...staffStats]
       .filter(s => s.avgSpeed !== null)
@@ -315,7 +348,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       .slice(0, 3);
     const podiumEfficiency = [...staffStats].sort((a, b) => b.roomsPerHour - a.roomsPerHour).slice(0, 3);
 
-    // 8. Progress trend chart data
+    // 9. Progress trend chart data
     const trendData = filteredSummaries
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(s => {
@@ -348,36 +381,121 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       },
       trendData
     };
-  }, [tasks, staff, reports, period]);
+  }, [tasks, staff, reports, period, customStartDate, customEndDate]);
+
+  // Lock screen view if not unlocked yet
+  if (!isUnlocked) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '55vh', padding: '24px' }}>
+        <Card className="bg-white border-gray-200 shadow-sm" style={{ width: '100%', maxWidth: '400px' }}>
+          <CardContent style={{ padding: '32px 24px', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔒</div>
+            <h2 className="text-lg font-bold text-gray-800" style={{ marginBottom: '8px' }}>Accès Sécurisé</h2>
+            <p className="text-sm text-gray-500" style={{ marginBottom: '24px' }}>
+              Veuillez entrer le code d'accès pour visualiser les statistiques de performance.
+            </p>
+            
+            <form onSubmit={handleUnlockSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <input
+                type="password"
+                placeholder="Code d'accès"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #E5E7EB',
+                  fontSize: '14px',
+                  textAlign: 'center',
+                  outline: 'none',
+                  boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
+                }}
+                autoFocus
+              />
+              
+              {passwordError && (
+                <p style={{ color: '#EF4444', fontSize: '12px', fontWeight: '600' }}>{passwordError}</p>
+              )}
+              
+              <Button type="submit" className="w-full">
+                Déverrouiller
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-12" style={{ paddingLeft: '8px', paddingRight: '8px' }}>
       
       {/* Date Period Picker Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 shadow-sm" style={{ padding: '20px 24px' }}>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 shadow-sm" style={{ padding: '20px 24px' }}>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Tableau de bord de performance</h2>
           <p className="text-sm text-gray-500">Statistiques en temps réel issues du terrain et des archives</p>
         </div>
         
-        <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg">
-          {[
-            { id: 'today', label: "Aujourd'hui" },
-            { id: 'week', label: 'Cette semaine' },
-            { id: 'month', label: 'Ce mois' },
-            { id: 'year', label: 'Cette année' },
-            { id: 'all', label: 'Historique complet' }
-          ].map(p => (
-            <Button
-              key={p.id}
-              variant={period === p.id ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setPeriod(p.id)}
-              className="h-8 text-xs font-medium px-3"
-            >
-              {p.label}
-            </Button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg">
+            {[
+              { id: 'today', label: "Aujourd'hui" },
+              { id: 'week', label: 'Cette semaine' },
+              { id: 'month', label: 'Ce mois' },
+              { id: 'year', label: 'Cette année' },
+              { id: 'custom', label: 'Période' },
+              { id: 'all', label: 'Tout' }
+            ].map(p => (
+              <Button
+                key={p.id}
+                variant={period === p.id ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setPeriod(p.id)}
+                className="h-8 text-xs font-medium px-3"
+              >
+                {p.label}
+              </Button>
+            ))}
+          </div>
+
+          {/* Custom Date Range Picker */}
+          {period === 'custom' && (
+            <div className="flex items-center gap-2 p-1.5 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center gap-1 text-xs text-gray-500 font-medium">
+                <span>Du</span>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #E5E7EB',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    outline: 'none',
+                    background: 'white'
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-1 text-xs text-gray-500 font-medium">
+                <span>Au</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #E5E7EB',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    outline: 'none',
+                    background: 'white'
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

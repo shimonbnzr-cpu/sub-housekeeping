@@ -86,6 +86,26 @@ export default function Dashboard() {
     day: 'numeric' 
   });
 
+  // URL Hash Router
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash === '#/reports') {
+        setActiveTab('reports');
+        setSelectedReport(null);
+      } else if (hash === '#/statistics') {
+        setActiveTab('statistics');
+      } else {
+        setActiveTab('planning');
+        setSelectedReport(null);
+      }
+    };
+
+    handleHashChange(); // Run on mount
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   // Subscribe to realtime updates
   useEffect(() => {
     // Force French for Dashboard
@@ -640,11 +660,12 @@ export default function Dashboard() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', borderBottom: '1px solid #E5E7EB', marginBottom: 16 }}>
-        <button
-          onClick={() => { setActiveTab('planning'); setSelectedReport(null); }}
+        <a
+          href="#/planning"
           style={{
             padding: '12px 24px',
-            border: 'none',
+            textDecoration: 'none',
+            display: 'inline-block',
             background: activeTab === 'planning' ? '#3B82F6' : 'transparent',
             color: activeTab === 'planning' ? 'white' : '#6B7280',
             fontWeight: 600,
@@ -654,12 +675,13 @@ export default function Dashboard() {
           }}
         >
           {t('allRooms')}
-        </button>
-        <button
-          onClick={() => setActiveTab('reports')}
+        </a>
+        <a
+          href="#/reports"
           style={{
             padding: '12px 24px',
-            border: 'none',
+            textDecoration: 'none',
+            display: 'inline-block',
             background: activeTab === 'reports' ? '#3B82F6' : 'transparent',
             color: activeTab === 'reports' ? 'white' : '#6B7280',
             fontWeight: 600,
@@ -669,12 +691,13 @@ export default function Dashboard() {
           }}
         >
           {t('reports')}
-        </button>
-        <button
-          onClick={() => setActiveTab('statistics')}
+        </a>
+        <a
+          href="#/statistics"
           style={{
             padding: '12px 24px',
-            border: 'none',
+            textDecoration: 'none',
+            display: 'inline-block',
             background: activeTab === 'statistics' ? '#3B82F6' : 'transparent',
             color: activeTab === 'statistics' ? 'white' : '#6B7280',
             fontWeight: 600,
@@ -683,7 +706,7 @@ export default function Dashboard() {
           }}
         >
           Statistiques 📊
-        </button>
+        </a>
       </div>
 
       <main className="main" onClick={(e) => {
