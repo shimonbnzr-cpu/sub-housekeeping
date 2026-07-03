@@ -351,10 +351,10 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
   }, [tasks, staff, reports, period]);
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-12" style={{ paddingLeft: '8px', paddingRight: '8px' }}>
       
       {/* Date Period Picker Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 shadow-sm" style={{ padding: '20px 24px' }}>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Tableau de bord de performance</h2>
           <p className="text-sm text-gray-500">Statistiques en temps réel issues du terrain et des archives</p>
@@ -384,7 +384,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       {/* Primary KPI Grid Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="bg-white border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '20px 24px' }}>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chambres faites</div>
             <div className="text-3xl font-extrabold text-emerald-600 mt-2">{stats.totalRooms}</div>
             <div className="text-xs text-gray-500 mt-1">Sur la période sélectionnée</div>
@@ -392,7 +392,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         </Card>
 
         <Card className="bg-white border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '20px 24px' }}>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Temps moyen Blanc / Recouche</div>
             <div className="text-2xl font-extrabold text-indigo-600 mt-2">
               {stats.globalAvgBlanc ? `${stats.globalAvgBlanc}m` : '--'} <span className="text-gray-400 text-lg font-normal">/</span> {stats.globalAvgRecouche ? `${stats.globalAvgRecouche}m` : '--'}
@@ -402,7 +402,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         </Card>
 
         <Card className="bg-white border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '20px 24px' }}>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Heures de présence totales</div>
             <div className="text-3xl font-extrabold text-gray-800 mt-2">{stats.totalShiftHours} h</div>
             <div className="text-xs text-gray-500 mt-1">Cumulé sur {stats.totalWorkedDays} jours de travail</div>
@@ -410,7 +410,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         </Card>
 
         <Card className="bg-white border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '20px 24px' }}>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Efficacité moyenne</div>
             <div className="text-3xl font-extrabold text-amber-600 mt-2">{stats.globalRoomsPerHour} <span className="text-sm font-normal text-gray-500">ch/h</span></div>
             <div className="text-xs text-gray-500 mt-1">Chambres nettoyées par heure de shift</div>
@@ -423,7 +423,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         
         {/* Podium Volume */}
         <Card className="bg-white border border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '24px' }}>
             <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">🏆 Volume (Total chambres)</h3>
             <div className="flex justify-center items-end space-x-2 h-36 pt-4">
               {/* 2nd Place */}
@@ -462,7 +462,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
         {/* Podium Speed */}
         <Card className="bg-white border border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '24px' }}>
             <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">⚡ Vitesse (Temps moyen)</h3>
             <div className="flex justify-center items-end space-x-2 h-36 pt-4">
               {/* 2nd Place */}
@@ -501,7 +501,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
         {/* Podium Efficiency */}
         <Card className="bg-white border border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '24px' }}>
             <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">📈 Rendement (Chambres/heure)</h3>
             <div className="flex justify-center items-end space-x-2 h-36 pt-4">
               {/* 2nd Place */}
@@ -541,8 +541,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
       {/* Main Stats Table */}
       <Card className="bg-white border border-gray-200 shadow-sm overflow-hidden">
-        <CardContent className="p-0">
-          <div className="p-6 border-b border-gray-100">
+        <CardContent style={{ padding: '0' }}>
+          <div className="border-b border-gray-100" style={{ padding: '20px 24px' }}>
             <h3 className="text-base font-bold text-gray-800">Synthèse détaillée par collaborateur</h3>
             <p className="text-xs text-gray-400 mt-1">Données complètes pour l'intégralité du personnel enregistré</p>
           </div>
@@ -551,43 +551,43 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
             <table className="w-full text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-gray-50 text-gray-400 font-semibold uppercase text-[10px] tracking-wider border-b border-gray-100">
-                  <th className="py-3 px-4">Collaborateur</th>
-                  <th className="py-3 px-4 text-center">Jours travaillés</th>
-                  <th className="py-3 px-4 text-center">Présence (h)</th>
-                  <th className="py-3 px-4 text-center">Chambres faites</th>
-                  <th className="py-3 px-4 text-center">Blanc / Recouche</th>
-                  <th className="py-3 px-4 text-center">Moy. Chambres / jour</th>
-                  <th className="py-3 px-4 text-center">Rendement (ch/h)</th>
-                  <th className="py-3 px-4 text-center">Moy. Blanc</th>
-                  <th className="py-3 px-4 text-center">Moy. Recouche</th>
-                  <th className="py-3 px-4 text-center">Incidents</th>
-                  <th className="py-3 px-4 text-center">Saisies Suspectes</th>
+                  <th style={{ padding: '12px 16px' }}>Collaborateur</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Jours travaillés</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Présence (h)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Chambres faites</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Blanc / Recouche</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Chambres / jour</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Rendement (ch/h)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Blanc</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Recouche</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Incidents</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Saisies Suspectes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {stats.staffStats.map((s, index) => (
                   <tr key={index} className="hover:bg-gray-50 text-gray-700">
-                    <td className="py-3 px-4 font-semibold text-gray-800">{s.name}</td>
-                    <td className="py-3 px-4 text-center font-medium">{s.daysWorked}</td>
-                    <td className="py-3 px-4 text-center">{s.totalShiftHours} h</td>
-                    <td className="py-3 px-4 text-center font-bold text-emerald-600">{s.roomsCleaned}</td>
-                    <td className="py-3 px-4 text-center text-xs text-gray-500">
+                    <td style={{ padding: '12px 16px', fontWeight: '600' }} className="text-gray-800">{s.name}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{s.daysWorked}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>{s.totalShiftHours} h</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-emerald-600">{s.roomsCleaned}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px' }} className="text-gray-500">
                       {s.blancCleaned} B / {s.recoucheCleaned} R
                     </td>
-                    <td className="py-3 px-4 text-center font-medium">{s.roomsPerDay}</td>
-                    <td className="py-3 px-4 text-center font-semibold text-amber-600">{s.roomsPerHour}/h</td>
-                    <td className="py-3 px-4 text-center text-indigo-600 font-medium">
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{s.roomsPerDay}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600' }} className="text-amber-600">{s.roomsPerHour}/h</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }} className="text-indigo-600">
                       {s.avgBlanc !== null ? `${s.avgBlanc} min` : '--'}
                     </td>
-                    <td className="py-3 px-4 text-center text-amber-600 font-medium">
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }} className="text-amber-600">
                       {s.avgRecouche !== null ? `${s.avgRecouche} min` : '--'}
                     </td>
-                    <td className="py-3 px-4 text-center">
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       <Badge variant={s.incidentRate > 20 ? 'destructive' : 'secondary'} className="text-[10px]">
                         {s.incidentsCount} ({s.incidentRate}%)
                       </Badge>
                     </td>
-                    <td className="py-3 px-4 text-center">
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       {s.anomalyRate > 0 ? (
                         <span className="text-red-500 font-semibold text-xs">
                           ⚠️ {s.anomalyRate}%
@@ -609,7 +609,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         
         {/* Timeline of release times */}
         <Card className="bg-white border border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '24px' }}>
             <div className="mb-4">
               <h3 className="text-sm font-bold text-gray-800">Timeline de libération des chambres</h3>
               <p className="text-xs text-gray-400 mt-1">Répartition des validations par heure de la journée</p>
@@ -621,7 +621,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                   <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
                   <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
                   <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
-                  <Tooltip formatter={(value) => [`${value} chambres libérées`]} />
+                  <Tooltip formatter={(value) => [`${value} chambres`]} />
                   <Bar dataKey="Chambres libérées" fill="#3B82F6" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -631,7 +631,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
         {/* Completion rate trend */}
         <Card className="bg-white border border-gray-200 shadow-sm">
-          <CardContent className="pt-6">
+          <CardContent style={{ padding: '24px' }}>
             <div className="mb-4">
               <h3 className="text-sm font-bold text-gray-800">Évolution de l'activité quotidienne</h3>
               <p className="text-xs text-gray-400 mt-1">Tendance de complétion et volumes sur la période</p>
@@ -666,7 +666,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
       {/* Suspect validations alerts block */}
       <Card className="bg-white border border-gray-200 shadow-sm">
-        <CardContent className="pt-6">
+        <CardContent style={{ padding: '24px' }}>
           <div className="mb-4">
             <h3 className="text-sm font-bold text-gray-800">⚠️ Alertes de saisies suspectes (Hors réalité)</h3>
             <p className="text-xs text-gray-400 mt-1">Validations ultra-rapides (&lt;2 min) ou oublis de validation (&gt;60 min)</p>
@@ -681,23 +681,23 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               <table className="w-full text-left text-sm border-collapse">
                 <thead>
                   <tr className="bg-red-50 text-red-700 font-semibold text-xs border-b border-red-100">
-                    <th className="py-2 px-4">Date</th>
-                    <th className="py-2 px-4">Heure</th>
-                    <th className="py-2 px-4">Chambre</th>
-                    <th className="py-2 px-4">Employé</th>
-                    <th className="py-2 px-4 text-center">Durée enregistrée</th>
-                    <th className="py-2 px-4">Type d'erreur</th>
+                    <th style={{ padding: '8px 16px' }}>Date</th>
+                    <th style={{ padding: '8px 16px' }}>Heure</th>
+                    <th style={{ padding: '8px 16px' }}>Chambre</th>
+                    <th style={{ padding: '8px 16px' }}>Employé</th>
+                    <th style={{ padding: '8px 16px', textAlign: 'center' }}>Durée enregistrée</th>
+                    <th style={{ padding: '8px 16px' }}>Type d'erreur</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {stats.suspectValidations.map((a, idx) => (
                     <tr key={idx} className="hover:bg-red-50 text-gray-700">
-                      <td className="py-2 px-4 text-xs font-medium">{a.date}</td>
-                      <td className="py-2 px-4 text-xs">{a.time}</td>
-                      <td className="py-2 px-4 font-bold text-red-700">Chambre {a.roomNumber}</td>
-                      <td className="py-2 px-4 font-medium">{a.staffName}</td>
-                      <td className="py-2 px-4 text-center font-bold text-red-600">{a.durationMin} min</td>
-                      <td className="py-2 px-4 text-xs text-red-600 font-semibold">{a.reason}</td>
+                      <td style={{ padding: '8px 16px' }} className="text-xs font-medium">{a.date}</td>
+                      <td style={{ padding: '8px 16px' }} className="text-xs">{a.time}</td>
+                      <td style={{ padding: '8px 16px', fontWeight: 'bold' }} className="text-red-700">Chambre {a.roomNumber}</td>
+                      <td style={{ padding: '8px 16px', fontWeight: '500' }}>{a.staffName}</td>
+                      <td style={{ padding: '8px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-red-600">{a.durationMin} min</td>
+                      <td style={{ padding: '8px 16px' }} className="text-xs text-red-600 font-semibold">{a.reason}</td>
                     </tr>
                   ))}
                 </tbody>
