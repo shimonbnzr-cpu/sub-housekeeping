@@ -364,6 +364,73 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         };
       });
 
+    // 10. Compute daily adequacy metrics (workload vs capacity) for the calendar
+    const adequacyCalendar = filteredSummaries
+      .sort((a, b) => b.date.localeCompare(a.date)) // Newest first
+      .map(s => {
+        const dayDoneBlanc = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.blanc || 0), 0) : 0;
+        const dayDoneRecouche = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.recouche || 0), 0) : 0;
+        
+        const avgB = globalAvgBlanc || 25;
+        const avgR = globalAvgRecouche || 12;
+        const estWorkloadMin = (dayDoneBlanc * avgB) + (dayDoneRecouche * avgR);
+        const estWorkloadHours = Math.round((estWorkloadMin / 60) * 10) / 10;
+        
+        const capacityHours = s.byStaff ? s.byStaff.reduce((sum, st) => sum + getShiftHours(st.shift_start, st.shift_end), 0) : 0;
+        const staffCount = s.byStaff ? s.byStaff.length : 0;
+
+        let status = 'good';
+        let label = 'Adéquat 🟢';
+        let color = '#D1FAE5'; // Emerald 100 bg
+        let textColor = '#065F46'; // Emerald 800 text
+        let borderColor = '#10B981'; // Emerald 500 border
+
+        if (capacityHours === 0) {
+          status = 'undefined';
+          label = 'Non défini ⚪';
+          color = '#F3F4F6';
+          textColor = '#374151';
+          borderColor = '#9CA3AF';
+        } else {
+          const ratio = estWorkloadHours / capacityHours;
+          if (ratio < 0.8) {
+            status = 'overstaffed';
+            label = 'Sur-effectif 🟡';
+            color = '#FEF3C7';
+            textColor = '#92400E';
+            borderColor = '#F59E0B';
+          } else if (ratio > 1.1) {
+            status = 'understaffed';
+            label = 'Sous-effectif 🔴';
+            color = '#FEE2E2';
+            textColor = '#991B1B';
+            borderColor = '#EF4444';
+          }
+        }
+
+        const dateObj = new Date(s.date + 'T00:00:00');
+        const formattedDate = dateObj.toLocaleDateString('fr-FR', {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short'
+        });
+
+        return {
+          date: s.date,
+          formattedDate,
+          workload: estWorkloadHours,
+          capacity: Math.round(capacityHours * 10) / 10,
+          staffCount,
+          status,
+          label,
+          color,
+          textColor,
+          borderColor,
+          doneBlanc: dayDoneBlanc,
+          doneRecouche: dayDoneRecouche
+        };
+      });
+
     return {
       staffStats,
       totalRooms,
@@ -379,7 +446,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         speed: podiumSpeed,
         efficiency: podiumEfficiency
       },
-      trendData
+      trendData,
+      adequacyCalendar
     };
   }, [tasks, staff, reports, period, customStartDate, customEndDate]);
 
@@ -781,6 +849,87 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           </CardContent>
         </Card>
       </div>
+
+      {/* Retroactive staffing adequacy calendar */}
+      <Card className="bg-white border border-gray-200 shadow-sm">
+        <CardContent style={{ padding: '24px' }}>
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-800">Calendrier rétroactif d'adéquation des effectifs</h3>
+            <p className="text-xs text-gray-400 mt-1">
+              Analyse de l'équilibre quotidien entre la charge de travail (temps estimé) et les heures de présence de l'équipe (shift).
+            </p>
+          </div>
+
+          {stats.adequacyCalendar.length === 0 ? (
+            <div className="py-8 text-center text-gray-400 font-semibold text-sm">
+              Aucune donnée d'adéquation disponible pour la période sélectionnée.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-4">
+              {stats.adequacyCalendar.map((day, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    backgroundColor: 'white',
+                    border: `1px solid ${day.borderColor}`,
+                    borderRadius: '12px',
+                    padding: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                    minHeight: '120px'
+                  }}
+                >
+                  <div className="flex justify-between items-start">
+                    <span className="text-xs font-bold text-gray-800 capitalize">
+                      {day.formattedDate}
+                    </span>
+                    <span className="text-[10px] font-semibold text-gray-400">
+                      {day.staffCount} pers
+                    </span>
+                  </div>
+
+                  <div className="my-2 text-center">
+                    <span
+                      style={{
+                        backgroundColor: day.color,
+                        color: day.textColor,
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        padding: '3px 8px',
+                        borderRadius: '20px',
+                        display: 'inline-block'
+                      }}
+                    >
+                      {day.label}
+                    </span>
+                  </div>
+
+                  <div className="text-[10px] text-gray-500 font-medium space-y-0.5">
+                    <div className="flex justify-between">
+                      <span>Charge :</span>
+                      <span className="font-bold">{day.workload} h</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Capacité :</span>
+                      <span className="font-bold">{day.capacity} h</span>
+                    </div>
+                    {day.capacity > 0 && (
+                      <div className="flex justify-between border-t border-dashed border-gray-150 pt-1 mt-1 font-semibold">
+                        <span>Adéquation :</span>
+                        <span style={{ color: day.textColor }}>
+                          {Math.round((day.workload / day.capacity) * 100)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Suspect validations alerts block */}
       <Card className="bg-white border border-gray-200 shadow-sm">
