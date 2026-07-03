@@ -92,6 +92,121 @@ const compileTodaySummary = (tasks, staff) => {
   };
 };
 
+// Compiles a task list (snapshot) by grouping beds into single physical room units
+const compilePhysicalSummary = (s, staff) => {
+  const snapshot = s.tasksSnapshot || [];
+  
+  // Group tasks by their physical room base number
+  const roomsMap = {};
+  snapshot.forEach(t => {
+    const roomNumberStr = String(t.roomNumber);
+    const roomBase = roomNumberStr.split('-')[0];
+    
+    if (!roomsMap[roomBase]) {
+      roomsMap[roomBase] = {
+        roomBase,
+        tasks: []
+      };
+    }
+    roomsMap[roomBase].tasks.push(t);
+  });
+
+  // Calculate state, assignee, type, and durations for each physical room
+  const physicalRooms = Object.values(roomsMap).map(r => {
+    const doneTasks = r.tasks.filter(t => t.cleaning_status === 'done');
+    const assignedTasks = r.tasks.filter(t => t.cleaning_assignedTo);
+    
+    const isDone = doneTasks.length > 0;
+    const isInProgress = r.tasks.some(t => t.cleaning_status === 'in_progress');
+    const isDnd = r.tasks.some(t => t.cleaning_skip_reason === 'dnd');
+    const isPostponed = r.tasks.some(t => t.cleaning_skip_reason === 'postponed');
+
+    const assignedStaffId = assignedTasks.length > 0 ? assignedTasks[0].cleaning_assignedTo : null;
+    const type = r.tasks.length > 0 ? r.tasks[0].cleaning_type : 'recouche';
+    const incidentText = r.tasks.find(t => t.cleaning_incident && t.cleaning_incident !== 'Ne pas déranger')?.cleaning_incident || null;
+
+    // Room start time is the earliest start of any task in the room
+    const startTimes = r.tasks.map(t => parseDate(t.cleaning_startedAt)).filter(d => d !== null);
+    // Room end time is the latest completion of any task in the room
+    const endTimes = r.tasks.map(t => parseDate(t.cleaning_completedAt)).filter(d => d !== null);
+    
+    const firstStartedAt = startTimes.length > 0 ? new Date(Math.min(...startTimes)) : null;
+    const lastCompletedAt = endTimes.length > 0 ? new Date(Math.max(...endTimes)) : null;
+    
+    const durationMin = firstStartedAt && lastCompletedAt && lastCompletedAt > firstStartedAt
+      ? (lastCompletedAt - firstStartedAt) / (1000 * 60)
+      : null;
+
+    return {
+      roomBase,
+      isDone,
+      isInProgress,
+      isDnd,
+      isPostponed,
+      assignedStaffId,
+      type,
+      incidentText,
+      firstStartedAt,
+      lastCompletedAt,
+      durationMin
+    };
+  });
+
+  // Re-calculate the staff metrics based on unique physical rooms cleaned
+  const presentStaffIds = s.byStaff 
+    ? s.byStaff.map(st => st.id) 
+    : Array.from(new Set(physicalRooms.map(r => r.assignedStaffId).filter(id => id !== null)));
+  
+  const byStaff = presentStaffIds.map(staffId => {
+    const staffMember = staff.find(st => st.id === staffId);
+    const staffRooms = physicalRooms.filter(r => r.assignedStaffId === staffId);
+    
+    const doneRooms = staffRooms.filter(r => r.isDone);
+    const blancRooms = doneRooms.filter(r => r.type === 'blanc');
+    const recoucheRooms = doneRooms.filter(r => r.type === 'recouche');
+    const incidentRooms = staffRooms.filter(r => r.incidentText);
+    const postponedRooms = staffRooms.filter(r => r.isPostponed);
+    const dndRooms = staffRooms.filter(r => r.isDnd);
+
+    const bsOriginal = s.byStaff?.find(st => st.id === staffId);
+    const shift_start = bsOriginal ? bsOriginal.shift_start : (staffMember?.shift_start || null);
+    const shift_end = bsOriginal ? bsOriginal.shift_end : (staffMember?.shift_end || null);
+
+    return {
+      id: staffId,
+      name: staffMember?.name || bsOriginal?.name || 'Inconnu',
+      done: doneRooms.length,
+      blanc: blancRooms.length,
+      recouche: recoucheRooms.length,
+      incidents: incidentRooms.length,
+      postponed: postponedRooms.length,
+      dnd: dndRooms.length,
+      shift_start,
+      shift_end
+    };
+  });
+
+  const doneCount = physicalRooms.filter(r => r.isDone).length;
+  const inProgressCount = physicalRooms.filter(r => r.isInProgress && !r.isDone).length;
+  const dndCount = physicalRooms.filter(r => r.isDnd && !r.isDone).length;
+  const postponedCount = physicalRooms.filter(r => r.isPostponed && !r.isDone).length;
+
+  return {
+    date: s.date,
+    summary: {
+      total: physicalRooms.length,
+      done: doneCount,
+      inProgress: inProgressCount,
+      dnd: dndCount,
+      postponed: postponedCount,
+      notDone: physicalRooms.filter(r => !r.isDone && !r.isInProgress && !r.isDnd && !r.isPostponed).length
+    },
+    byStaff,
+    physicalRooms,
+    isToday: !!s.isToday
+  };
+};
+
 export default function StatisticsView({ tasks = [], staff = [], reports = [] }) {
   const { t } = useTranslation();
   const [period, setPeriod] = useState('week'); // 'today' | 'week' | 'month' | 'year' | 'custom' | 'all'
@@ -169,10 +284,18 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       todaySummary
     ];
 
-    // 3. Filter summaries in the active date period
-    const filteredSummaries = combinedSummaries.filter(s => checkInRange(s.date));
+    // 3. Process all summaries to group task listings by physical room unit
+    const processedSummaries = combinedSummaries.map(s => {
+      if (s.tasksSnapshot && s.tasksSnapshot.length > 0) {
+        return compilePhysicalSummary(s, staff);
+      }
+      return s;
+    });
 
-    // 4. Extract and parse all completed tasks details across the period
+    // 4. Filter summaries in the active date period
+    const filteredSummaries = processedSummaries.filter(s => checkInRange(s.date));
+
+    // 5. Extract and parse all completed physical rooms details across the period
     const completedTasksList = [];
     const suspectValidations = [];
     
@@ -181,39 +304,33 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
     const MAX_LIMIT_MIN = 60;
 
     filteredSummaries.forEach(s => {
-      const snapshot = s.tasksSnapshot || [];
-      snapshot.forEach(t => {
-        if (t.cleaning_status === 'done') {
-          const start = parseDate(t.cleaning_startedAt);
-          const end = parseDate(t.cleaning_completedAt);
-          
-          if (start && end && end > start) {
-            const durationMin = (end - start) / (1000 * 60);
-            const isOutlier = durationMin < MIN_LIMIT_MIN || durationMin > MAX_LIMIT_MIN;
+      const rooms = s.physicalRooms || [];
+      rooms.forEach(r => {
+        if (r.isDone) {
+          const durationMin = r.durationMin;
+          const isOutlier = durationMin !== null && (durationMin < MIN_LIMIT_MIN || durationMin > MAX_LIMIT_MIN);
 
-            completedTasksList.push({
+          completedTasksList.push({
+            date: s.date,
+            roomNumber: r.roomBase,
+            type: r.type,
+            staffId: r.assignedStaffId,
+            durationMin,
+            isOutlier,
+            completedAt: r.lastCompletedAt
+          });
+
+          // Suspect validation log (Alerts)
+          if (isOutlier) {
+            const staffName = staff.find(st => st.id === r.assignedStaffId)?.name || 'Inconnu';
+            suspectValidations.push({
               date: s.date,
-              roomId: t.roomId,
-              roomNumber: t.roomNumber,
-              type: t.cleaning_type,
-              staffId: t.cleaning_assignedTo,
-              durationMin,
-              isOutlier,
-              completedAt: end
+              roomNumber: r.roomBase,
+              staffName,
+              durationMin: Math.round(durationMin * 10) / 10,
+              time: r.lastCompletedAt ? r.lastCompletedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '',
+              reason: durationMin < MIN_LIMIT_MIN ? 'Trop rapide (< 2 min)' : 'Oubli de validation (> 60 min)'
             });
-
-            // Suspect validation log (Alerts)
-            if (isOutlier) {
-              const staffName = staff.find(st => st.id === t.cleaning_assignedTo)?.name || 'Inconnu';
-              suspectValidations.push({
-                date: s.date,
-                roomNumber: t.roomNumber,
-                staffName,
-                durationMin: Math.round(durationMin * 10) / 10,
-                time: end.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-                reason: durationMin < MIN_LIMIT_MIN ? 'Trop rapide (< 2 min)' : 'Oubli de validation (> 60 min)'
-              });
-            }
           }
         }
       });
@@ -226,7 +343,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       return b.time.localeCompare(a.time);
     });
 
-    // 5. Calculate individual metrics for ALL staff members
+    // 6. Calculate individual metrics for ALL staff members based on physical rooms
     const staffStats = staff.map(s => {
       let daysWorked = 0;
       let totalShiftHours = 0;
@@ -256,8 +373,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       const staffTasks = completedTasksList.filter(t => t.staffId === s.id);
       const validStaffTasks = staffTasks.filter(t => !t.isOutlier);
       
-      const validBlancDurations = validStaffTasks.filter(t => t.type === 'blanc').map(t => t.durationMin);
-      const validRecoucheDurations = validStaffTasks.filter(t => t.type === 'recouche').map(t => t.durationMin);
+      const validBlancDurations = validStaffTasks.filter(t => t.type === 'blanc').map(t => t.durationMin).filter(v => v !== null);
+      const validRecoucheDurations = validStaffTasks.filter(t => t.type === 'recouche').map(t => t.durationMin).filter(v => v !== null);
 
       const avgBlanc = validBlancDurations.length > 0 
         ? Math.round(validBlancDurations.reduce((a, b) => a + b, 0) / validBlancDurations.length)
@@ -302,7 +419,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       };
     });
 
-    // 6. Global aggregated metrics
+    // 7. Global aggregated metrics (based on physical rooms)
     const totalRooms = staffStats.reduce((sum, s) => sum + s.roomsCleaned, 0);
     const totalWorkedDays = staffStats.reduce((sum, s) => sum + s.daysWorked, 0);
     const totalShiftHours = staffStats.reduce((sum, s) => sum + s.totalShiftHours, 0);
@@ -320,7 +437,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
     const globalRoomsPerHour = totalShiftHours > 0 ? Math.round((totalRooms / totalShiftHours) * 10) / 10 : 0;
 
-    // 7. Timelines of completions by hour of the day
+    // 8. Timelines of completions by hour of the day (based on physical rooms)
     const hourlyBins = Array.from({ length: 10 }, (_, i) => {
       const hour = 8 + i; // 8h to 17h
       return {
@@ -340,7 +457,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       }
     });
 
-    // 8. Leaderboard Podium sorting
+    // 9. Leaderboard Podium sorting
     const podiumVolume = [...staffStats].sort((a, b) => b.roomsCleaned - a.roomsCleaned).slice(0, 3);
     const podiumSpeed = [...staffStats]
       .filter(s => s.avgSpeed !== null)
@@ -348,7 +465,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       .slice(0, 3);
     const podiumEfficiency = [...staffStats].sort((a, b) => b.roomsPerHour - a.roomsPerHour).slice(0, 3);
 
-    // 9. Progress trend chart data
+    // 10. Progress trend chart data
     const trendData = filteredSummaries
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(s => {
@@ -364,7 +481,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         };
       });
 
-    // 10. Compute daily adequacy metrics (workload vs capacity) for the calendar
+    // 11. Compute daily adequacy metrics (workload vs capacity) for the calendar using physical rooms
     const adequacyCalendar = filteredSummaries
       .sort((a, b) => b.date.localeCompare(a.date)) // Newest first
       .map(s => {
@@ -502,7 +619,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 shadow-sm" style={{ padding: '20px 24px' }}>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Tableau de bord de performance</h2>
-          <p className="text-sm text-gray-500">Statistiques en temps réel issues du terrain et des archives</p>
+          <p className="text-sm text-gray-500">Statistiques en temps réel issues du terrain et des archives (basées sur les chambres physiques)</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
@@ -573,7 +690,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <CardContent style={{ padding: '20px 24px' }}>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chambres faites</div>
             <div className="text-3xl font-extrabold text-emerald-600 mt-2">{stats.totalRooms}</div>
-            <div className="text-xs text-gray-500 mt-1">Sur la période sélectionnée</div>
+            <div className="text-xs text-gray-500 mt-1">Sur la période sélectionnée (chambres physiques)</div>
           </CardContent>
         </Card>
 
@@ -730,7 +847,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         <CardContent style={{ padding: '0' }}>
           <div className="border-b border-gray-100" style={{ padding: '20px 24px' }}>
             <h3 className="text-base font-bold text-gray-800">Synthèse détaillée par collaborateur</h3>
-            <p className="text-xs text-gray-400 mt-1">Données complètes pour l'intégralité du personnel enregistré</p>
+            <p className="text-xs text-gray-400 mt-1">Données complètes pour l'intégralité du personnel enregistré (basées sur les chambres physiques)</p>
           </div>
           
           <div className="overflow-x-auto">
@@ -798,7 +915,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <CardContent style={{ padding: '24px' }}>
             <div className="mb-4">
               <h3 className="text-sm font-bold text-gray-800">Timeline de libération des chambres</h3>
-              <p className="text-xs text-gray-400 mt-1">Répartition des validations par heure de la journée</p>
+              <p className="text-xs text-gray-400 mt-1">Répartition des validations par heure de la journée (basée sur les chambres physiques)</p>
             </div>
             
             <div className="h-64">
@@ -856,7 +973,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <div className="mb-6">
             <h3 className="text-sm font-bold text-gray-800">Calendrier rétroactif d'adéquation des effectifs</h3>
             <p className="text-xs text-gray-400 mt-1">
-              Analyse de l'équilibre quotidien entre la charge de travail (temps estimé) et les heures de présence de l'équipe (shift).
+              Analyse de l'équilibre quotidien entre la charge de travail (temps estimé) et les heures de présence de l'équipe (shift) basées sur les chambres physiques.
             </p>
           </div>
 
