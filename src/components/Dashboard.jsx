@@ -64,6 +64,8 @@ export default function Dashboard() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [reportAuthor, setReportAuthor] = useState(() => localStorage.getItem('reportAuthor') || '');
   const [showReportAuthorDialog, setShowReportAuthorDialog] = useState(false);
+  const [inProgressRoomsForReport, setInProgressRoomsForReport] = useState([]);
+  const [selectedInProgressRoomIds, setSelectedInProgressRoomIds] = useState({});
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [newStaffName, setNewStaffName] = useState('');
@@ -410,6 +412,13 @@ export default function Dashboard() {
   };
 
   const handleGenerateReport = () => {
+    const inProgress = tasks.filter(t => t.cleaning_status === 'in_progress');
+    setInProgressRoomsForReport(inProgress);
+    const initialSelected = {};
+    inProgress.forEach(t => {
+      initialSelected[t.id] = true;
+    });
+    setSelectedInProgressRoomIds(initialSelected);
     setShowReportAuthorDialog(true);
   };
 
@@ -420,8 +429,24 @@ export default function Dashboard() {
     setShowReportAuthorDialog(false);
     console.log('[Report] Generating report with', tasks.length, 'tasks,', staff.length, 'staff');
     try {
-      await generateAndSaveReport(tasks, staff, reportAuthor.trim());
-      analytics.track('report_generated', { author: reportAuthor.trim(), tasks_count: tasks.length });
+      const updatedTasks = [...tasks];
+      const selectedIds = Object.keys(selectedInProgressRoomIds).filter(id => selectedInProgressRoomIds[id]);
+      
+      for (const taskId of selectedIds) {
+        await updateTaskStatus(taskId, 'done', { forceCompletedAtReport: true });
+        const idx = updatedTasks.findIndex(t => t.id === taskId);
+        if (idx !== -1) {
+          updatedTasks[idx] = {
+            ...updatedTasks[idx],
+            cleaning_status: 'done',
+            cleaning_completedAt: new Date(),
+            forceCompletedAtReport: true
+          };
+        }
+      }
+
+      await generateAndSaveReport(updatedTasks, staff, reportAuthor.trim());
+      analytics.track('report_generated', { author: reportAuthor.trim(), tasks_count: updatedTasks.length });
       console.log('[Report] Report generated successfully');
       alert('Rapport généré et sauvegardé.');
     } catch (err) {
@@ -1238,6 +1263,34 @@ export default function Dashboard() {
                 }}
               />
             </label>
+
+            {inProgressRoomsForReport.length > 0 && (
+              <div style={{ marginTop: 12, borderTop: '1px solid #E5E7EB', paddingTop: 12 }}>
+                <p style={{ fontSize: 13, fontWeight: 'bold', color: '#EF4444', marginBottom: 8 }}>
+                  ⚠️ Chambres toujours en cours :
+                </p>
+                <div style={{ maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {inProgressRoomsForReport.map(t => (
+                    <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#4B5563', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!selectedInProgressRoomIds[t.id]}
+                        onChange={(e) => {
+                          setSelectedInProgressRoomIds(prev => ({
+                            ...prev,
+                            [t.id]: e.target.checked
+                          }));
+                        }}
+                      />
+                      Chambre {t.roomNumber} ({staff.find(s => s.id === t.cleaning_assignedTo)?.name || 'Sans nom'})
+                    </label>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: '#6B7280', marginTop: 8 }}>
+                  Les chambres cochées seront marquées comme "terminées" et signalées dans les saisies suspectes (oublis de validation).
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter style={{ marginTop: 8 }}>
             <Button variant="secondary" onClick={() => setShowReportAuthorDialog(false)}>

@@ -376,6 +376,11 @@ export const updateTaskStatus = async (roomId, status, additionalData = {}) => {
   if (additionalData.incident !== undefined) {
     updates.cleaning_incident = additionalData.incident;
   }
+
+  // Handle report force completion flag
+  if (additionalData.forceCompletedAtReport !== undefined) {
+    updates.forceCompletedAtReport = additionalData.forceCompletedAtReport;
+  }
   
   await updateDoc(taskRef, updates);
 };

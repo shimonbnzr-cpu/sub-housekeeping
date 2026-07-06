@@ -2,15 +2,11 @@ import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   ResponsiveContainer, 
-  PieChart, 
-  Pie, 
-  Cell, 
   BarChart, 
   Bar, 
   XAxis, 
   YAxis, 
   Tooltip, 
-  Legend, 
   AreaChart, 
   Area, 
   CartesianGrid 
@@ -92,7 +88,7 @@ const compileTodaySummary = (tasks, staff) => {
   };
 };
 
-// Compiles a task list (snapshot) by grouping beds into single physical room units
+// Compiles a task list (snapshot) by grouping beds into single physical room units and classifying Classic vs Dorm
 const compilePhysicalSummary = (s, staff) => {
   const snapshot = s.tasksSnapshot || [];
   
@@ -120,10 +116,16 @@ const compilePhysicalSummary = (s, staff) => {
     const isInProgress = r.tasks.some(t => t.cleaning_status === 'in_progress');
     const isDnd = r.tasks.some(t => t.cleaning_skip_reason === 'dnd');
     const isPostponed = r.tasks.some(t => t.cleaning_skip_reason === 'postponed');
+    const forceCompletedAtReport = r.tasks.some(t => t.forceCompletedAtReport === true);
 
     const assignedStaffId = assignedTasks.length > 0 ? assignedTasks[0].cleaning_assignedTo : null;
     const type = r.tasks.length > 0 ? r.tasks[0].cleaning_type : 'recouche';
     const incidentText = r.tasks.find(t => t.cleaning_incident && t.cleaning_incident !== 'Ne pas déranger')?.cleaning_incident || null;
+
+    // Check if it is a dorm room
+    const isDorm = r.tasks.some(t => String(t.roomNumber).includes('-'));
+    const bedsCount = isDorm ? r.tasks.length : 1;
+    const bedsDoneCount = isDorm ? doneTasks.length : (isDone ? 1 : 0);
 
     // Room start time is the earliest start of any task in the room
     const startTimes = r.tasks.map(t => parseDate(t.cleaning_startedAt)).filter(d => d !== null);
@@ -143,12 +145,16 @@ const compilePhysicalSummary = (s, staff) => {
       isInProgress,
       isDnd,
       isPostponed,
+      forceCompletedAtReport,
       assignedStaffId,
       type,
       incidentText,
       firstStartedAt,
       lastCompletedAt,
-      durationMin
+      durationMin,
+      isDorm,
+      bedsCount,
+      bedsDoneCount
     };
   });
 
@@ -162,8 +168,20 @@ const compilePhysicalSummary = (s, staff) => {
     const staffRooms = physicalRooms.filter(r => r.assignedStaffId === staffId);
     
     const doneRooms = staffRooms.filter(r => r.isDone);
-    const blancRooms = doneRooms.filter(r => r.type === 'blanc');
-    const recoucheRooms = doneRooms.filter(r => r.type === 'recouche');
+    
+    // Separation: Classic rooms vs Dorm rooms
+    const classicDone = doneRooms.filter(r => !r.isDorm);
+    const classicBlanc = classicDone.filter(r => r.type === 'blanc');
+    const classicRecouche = classicDone.filter(r => r.type === 'recouche');
+    
+    const dormsDone = doneRooms.filter(r => r.isDorm);
+    const dormsBlanc = dormsDone.filter(r => r.type === 'blanc');
+    const dormsRecouche = dormsDone.filter(r => r.type === 'recouche');
+
+    const bedsDoneCount = staffRooms.reduce((sum, r) => sum + r.bedsDoneCount, 0);
+    const bedsBlancCount = staffRooms.filter(r => r.isDorm && r.type === 'blanc').reduce((sum, r) => sum + r.bedsDoneCount, 0);
+    const bedsRecoucheCount = staffRooms.filter(r => r.isDorm && r.type === 'recouche').reduce((sum, r) => sum + r.bedsDoneCount, 0);
+
     const incidentRooms = staffRooms.filter(r => r.incidentText);
     const postponedRooms = staffRooms.filter(r => r.isPostponed);
     const dndRooms = staffRooms.filter(r => r.isDnd);
@@ -176,8 +194,21 @@ const compilePhysicalSummary = (s, staff) => {
       id: staffId,
       name: staffMember?.name || bsOriginal?.name || 'Inconnu',
       done: doneRooms.length,
-      blanc: blancRooms.length,
-      recouche: recoucheRooms.length,
+      
+      // Granular physical counts
+      classicDone: classicDone.length,
+      classicBlanc: classicBlanc.length,
+      classicRecouche: classicRecouche.length,
+      
+      dormsDone: dormsDone.length,
+      dormsBlanc: dormsBlanc.length,
+      dormsRecouche: dormsRecouche.length,
+
+      // Bed counts
+      bedsDone: bedsDoneCount,
+      bedsBlanc: bedsBlancCount,
+      bedsRecouche: bedsRecoucheCount,
+
       incidents: incidentRooms.length,
       postponed: postponedRooms.length,
       dnd: dndRooms.length,
@@ -296,7 +327,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
     const filteredSummaries = processedSummaries.filter(s => checkInRange(s.date));
 
     // 5. Extract and parse all completed physical rooms details across the period
-    const completedTasksList = [];
+    const completedClassics = [];
+    const completedDorms = [];
     const suspectValidations = [];
     
     // Limits to filter out non-real validation duration data
@@ -309,27 +341,53 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         if (r.isDone) {
           const durationMin = r.durationMin;
           const isOutlier = durationMin !== null && (durationMin < MIN_LIMIT_MIN || durationMin > MAX_LIMIT_MIN);
-
-          completedTasksList.push({
-            date: s.date,
-            roomNumber: r.roomBase,
-            type: r.type,
-            staffId: r.assignedStaffId,
-            durationMin,
-            isOutlier,
-            completedAt: r.lastCompletedAt
-          });
+          const isForceCompleted = r.forceCompletedAtReport === true;
 
           // Suspect validation log (Alerts)
-          if (isOutlier) {
+          if (isOutlier || isForceCompleted) {
             const staffName = staff.find(st => st.id === r.assignedStaffId)?.name || 'Inconnu';
+            let reason = '';
+            if (isForceCompleted) {
+              reason = 'Oubli de validation (Forcé à la clôture)';
+            } else if (durationMin < MIN_LIMIT_MIN) {
+              reason = 'Trop rapide (< 2 min)';
+            } else {
+              reason = 'Oubli de validation (> 60 min)';
+            }
+
             suspectValidations.push({
               date: s.date,
               roomNumber: r.roomBase,
               staffName,
-              durationMin: Math.round(durationMin * 10) / 10,
-              time: r.lastCompletedAt ? r.lastCompletedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '',
-              reason: durationMin < MIN_LIMIT_MIN ? 'Trop rapide (< 2 min)' : 'Oubli de validation (> 60 min)'
+              durationMin: durationMin !== null ? Math.round(durationMin * 10) / 10 : '--',
+              time: r.lastCompletedAt ? r.lastCompletedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'Clôture',
+              reason
+            });
+          }
+
+          // Store in respective lists for averages
+          if (r.isDorm) {
+            completedDorms.push({
+              date: s.date,
+              roomNumber: r.roomBase,
+              type: r.type,
+              staffId: r.assignedStaffId,
+              durationMin,
+              isOutlier,
+              isForceCompleted,
+              completedAt: r.lastCompletedAt,
+              bedsDoneCount: r.bedsDoneCount
+            });
+          } else {
+            completedClassics.push({
+              date: s.date,
+              roomNumber: r.roomBase,
+              type: r.type,
+              staffId: r.assignedStaffId,
+              durationMin,
+              isOutlier,
+              isForceCompleted,
+              completedAt: r.lastCompletedAt
             });
           }
         }
@@ -343,59 +401,131 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       return b.time.localeCompare(a.time);
     });
 
-    // 6. Calculate individual metrics for ALL staff members based on physical rooms
+    // 7. Calculate Averages
+    const validClassics = completedClassics.filter(c => !c.isOutlier && !c.isForceCompleted);
+    const validClassicBlancs = validClassics.filter(c => c.type === 'blanc').map(c => c.durationMin).filter(v => v !== null);
+    const validClassicRecouches = validClassics.filter(c => c.type === 'recouche').map(c => c.durationMin).filter(v => v !== null);
+
+    const avgClassicBlanc = validClassicBlancs.length > 0
+      ? Math.round(validClassicBlancs.reduce((a, b) => a + b, 0) / validClassicBlancs.length)
+      : null;
+
+    const avgClassicRecouche = validClassicRecouches.length > 0
+      ? Math.round(validClassicRecouches.reduce((a, b) => a + b, 0) / validClassicRecouches.length)
+      : null;
+
+    const validDorms = completedDorms.filter(d => !d.isOutlier && !d.isForceCompleted);
+    const totalDormTimeMin = validDorms.map(d => d.durationMin).filter(v => v !== null).reduce((a, b) => a + b, 0);
+    const totalDormBeds = validDorms.reduce((sum, d) => sum + d.bedsDoneCount, 0);
+
+    // Global time per bed in dorm
+    const avgTimePerBed = totalDormBeds > 0 ? Math.round(totalDormTimeMin / totalDormBeds) : null;
+    
+    // Split by type (Blanc vs Recouche) for beds
+    const validDormBlancs = validDorms.filter(d => d.type === 'blanc');
+    const dormBlancsTime = validDormBlancs.map(d => d.durationMin).filter(v => v !== null).reduce((a, b) => a + b, 0);
+    const dormBlancsBeds = validDormBlancs.reduce((sum, d) => sum + d.bedsDoneCount, 0);
+    const avgBedBlanc = dormBlancsBeds > 0 ? Math.round(dormBlancsTime / dormBlancsBeds) : null;
+
+    const validDormRecouches = validDorms.filter(d => d.type === 'recouche');
+    const dormRecouchesTime = validDormRecouches.map(d => d.durationMin).filter(v => v !== null).reduce((a, b) => a + b, 0);
+    const dormRecouchesBeds = validDormRecouches.reduce((sum, d) => sum + d.bedsDoneCount, 0);
+    const avgBedRecouche = dormRecouchesBeds > 0 ? Math.round(dormRecouchesTime / dormRecouchesBeds) : null;
+
+    const validDormBlancDurations = validDormBlancs.map(d => d.durationMin).filter(v => v !== null);
+    const avgDormBlancBlock = validDormBlancDurations.length > 0
+      ? Math.round(validDormBlancDurations.reduce((a, b) => a + b, 0) / validDormBlancDurations.length)
+      : null;
+
+    const validDormRecoucheDurations = validDormRecouches.map(d => d.durationMin).filter(v => v !== null);
+    const avgDormRecoucheBlock = validDormRecoucheDurations.length > 0
+      ? Math.round(validDormRecoucheDurations.reduce((a, b) => a + b, 0) / validDormRecoucheDurations.length)
+      : null;
+
+    // 8. Calculate individual metrics for ALL staff members based on physical rooms
     const staffStats = staff.map(s => {
       let daysWorked = 0;
       let totalShiftHours = 0;
-      let roomsCleaned = 0;
-      let blancCleaned = 0;
-      let recoucheCleaned = 0;
+      
+      let classicCleaned = 0;
+      let classicBlanc = 0;
+      let classicRecouche = 0;
+
+      let dormsCleaned = 0;
+      let dormsBlanc = 0;
+      let dormsRecouche = 0;
+
+      let bedsCleaned = 0;
+      let bedsBlanc = 0;
+      let bedsRecouche = 0;
+
       let incidentsCount = 0;
       let dndCount = 0;
       let postponedCount = 0;
 
-      // Scan summaries for shifts and presence
       filteredSummaries.forEach(sum => {
         const bs = sum.byStaff?.find(st => st.id === s.id);
         if (bs) {
           daysWorked++;
           totalShiftHours += getShiftHours(bs.shift_start, bs.shift_end);
-          roomsCleaned += bs.done || 0;
-          blancCleaned += bs.blanc || 0;
-          recoucheCleaned += bs.recouche || 0;
+          
+          classicCleaned += bs.classicDone || 0;
+          classicBlanc += bs.classicBlanc || 0;
+          classicRecouche += bs.classicRecouche || 0;
+
+          dormsCleaned += bs.dormsDone || 0;
+          dormsBlanc += bs.dormsBlanc || 0;
+          dormsRecouche += bs.dormsRecouche || 0;
+
+          bedsCleaned += bs.bedsDone || 0;
+          bedsBlanc += bs.bedsBlanc || 0;
+          bedsRecouche += bs.bedsRecouche || 0;
+
           incidentsCount += bs.incidents || 0;
           dndCount += bs.dnd || 0;
           postponedCount += bs.postponed || 0;
         }
       });
 
-      // Filter tasks for this staff member (exclude outliers for cleaning speed averages)
-      const staffTasks = completedTasksList.filter(t => t.staffId === s.id);
-      const validStaffTasks = staffTasks.filter(t => !t.isOutlier);
+      // Filter staff tasks (excluding outliers) for average speeds
+      const staffClassics = completedClassics.filter(c => c.staffId === s.id && !c.isOutlier && !c.isForceCompleted);
+      const staffDorms = completedDorms.filter(d => d.staffId === s.id && !d.isOutlier && !d.isForceCompleted);
+
+      const staffClassicBlancTimes = staffClassics.filter(c => c.type === 'blanc').map(c => c.durationMin).filter(v => v !== null);
+      const staffClassicRecoucheTimes = staffClassics.filter(c => c.type === 'recouche').map(c => c.durationMin).filter(v => v !== null);
+
+      const avgClassicBlancLocal = staffClassicBlancTimes.length > 0
+        ? Math.round(staffClassicBlancTimes.reduce((a, b) => a + b, 0) / staffClassicBlancTimes.length)
+        : null;
+
+      const avgClassicRecoucheLocal = staffClassicRecoucheTimes.length > 0
+        ? Math.round(staffClassicRecoucheTimes.reduce((a, b) => a + b, 0) / staffClassicRecoucheTimes.length)
+        : null;
+
+      // Staff dorm time and bed time
+      const staffDormTimeMin = staffDorms.map(d => d.durationMin).filter(v => v !== null).reduce((a, b) => a + b, 0);
+      const staffDormBeds = staffDorms.reduce((sum, d) => sum + d.bedsDoneCount, 0);
+      const avgBedTimeLocal = staffDormBeds > 0 ? Math.round(staffDormTimeMin / staffDormBeds) : null;
+
+      const avgDormBlockLocal = staffDorms.length > 0
+        ? Math.round(staffDorms.map(d => d.durationMin).filter(v => v !== null).reduce((a, b) => a + b, 0) / staffDorms.length)
+        : null;
+
+      // Ratios (Total Rooms Cleaned = Classics + Dorms)
+      const totalPhysicalRoomsCleaned = classicCleaned + dormsCleaned;
+      const roomsPerDay = daysWorked > 0 ? Math.round((totalPhysicalRoomsCleaned / daysWorked) * 10) / 10 : 0;
+      const roomsPerHour = totalShiftHours > 0 ? Math.round((totalPhysicalRoomsCleaned / totalShiftHours) * 10) / 10 : 0;
       
-      const validBlancDurations = validStaffTasks.filter(t => t.type === 'blanc').map(t => t.durationMin).filter(v => v !== null);
-      const validRecoucheDurations = validStaffTasks.filter(t => t.type === 'recouche').map(t => t.durationMin).filter(v => v !== null);
+      const incidentRate = totalPhysicalRoomsCleaned > 0 ? Math.round((incidentsCount / totalPhysicalRoomsCleaned) * 100) : 0;
 
-      const avgBlanc = validBlancDurations.length > 0 
-        ? Math.round(validBlancDurations.reduce((a, b) => a + b, 0) / validBlancDurations.length)
-        : null;
-        
-      const avgRecouche = validRecoucheDurations.length > 0 
-        ? Math.round(validRecoucheDurations.reduce((a, b) => a + b, 0) / validRecoucheDurations.length)
-        : null;
-
-      const allValidDurations = [...validBlancDurations, ...validRecoucheDurations];
-      const avgSpeed = allValidDurations.length > 0
-        ? Math.round(allValidDurations.reduce((a, b) => a + b, 0) / allValidDurations.length)
-        : null;
-
-      // Ratios
-      const roomsPerDay = daysWorked > 0 ? Math.round((roomsCleaned / daysWorked) * 10) / 10 : 0;
-      const roomsPerHour = totalShiftHours > 0 ? Math.round((roomsCleaned / totalShiftHours) * 10) / 10 : 0;
-      const incidentRate = roomsCleaned > 0 ? Math.round((incidentsCount / roomsCleaned) * 100) : 0;
+      // Saisies suspectes (oublis de validation)
+      const staffAllClassicsRaw = completedClassics.filter(c => c.staffId === s.id);
+      const staffAllDormsRaw = completedDorms.filter(d => d.staffId === s.id);
       
-      const outlierAttempts = staffTasks.length;
-      const outlierCount = staffTasks.filter(t => t.isOutlier).length;
+      const outlierAttempts = staffAllClassicsRaw.length + staffAllDormsRaw.length;
+      const outlierCount = staffAllClassicsRaw.filter(c => c.isOutlier || c.isForceCompleted).length + 
+                           staffAllDormsRaw.filter(d => d.isOutlier || d.isForceCompleted).length;
+                           
       const anomalyRate = outlierAttempts > 0 ? Math.round((outlierCount / outlierAttempts) * 100) : 0;
 
       return {
@@ -403,15 +533,31 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         name: s.name,
         daysWorked,
         totalShiftHours: Math.round(totalShiftHours * 10) / 10,
-        roomsCleaned,
-        blancCleaned,
-        recoucheCleaned,
+        
+        // Physical Counts
+        classicCleaned,
+        classicBlanc,
+        classicRecouche,
+        dormsCleaned,
+        dormsBlanc,
+        dormsRecouche,
+        totalPhysicalRoomsCleaned,
+
+        // Bed Counts
+        bedsCleaned,
+        bedsBlanc,
+        bedsRecouche,
+
         incidentsCount,
         dndCount,
         postponedCount,
-        avgBlanc,
-        avgRecouche,
-        avgSpeed,
+
+        // Averages
+        avgClassicBlanc: avgClassicBlancLocal,
+        avgClassicRecouche: avgClassicRecoucheLocal,
+        avgDormBlock: avgDormBlockLocal,
+        avgBedTime: avgBedTimeLocal,
+
         roomsPerDay,
         roomsPerHour,
         incidentRate,
@@ -419,25 +565,14 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       };
     });
 
-    // 7. Global aggregated metrics (based on physical rooms)
-    const totalRooms = staffStats.reduce((sum, s) => sum + s.roomsCleaned, 0);
+    // 9. Global aggregated metrics (based on physical rooms & beds)
+    const totalRooms = staffStats.reduce((sum, s) => sum + s.totalPhysicalRoomsCleaned, 0);
+    const totalBeds = staffStats.reduce((sum, s) => sum + s.bedsCleaned, 0);
     const totalWorkedDays = staffStats.reduce((sum, s) => sum + s.daysWorked, 0);
     const totalShiftHours = staffStats.reduce((sum, s) => sum + s.totalShiftHours, 0);
-    
-    const allValidBlanc = completedTasksList.filter(t => !t.isOutlier && t.type === 'blanc').map(t => t.durationMin);
-    const allValidRecouche = completedTasksList.filter(t => !t.isOutlier && t.type === 'recouche').map(t => t.durationMin);
-
-    const globalAvgBlanc = allValidBlanc.length > 0 
-      ? Math.round(allValidBlanc.reduce((a, b) => a + b, 0) / allValidBlanc.length) 
-      : null;
-
-    const globalAvgRecouche = allValidRecouche.length > 0 
-      ? Math.round(allValidRecouche.reduce((a, b) => a + b, 0) / allValidRecouche.length) 
-      : null;
-
     const globalRoomsPerHour = totalShiftHours > 0 ? Math.round((totalRooms / totalShiftHours) * 10) / 10 : 0;
 
-    // 8. Timelines of completions by hour of the day (based on physical rooms)
+    // 10. Timelines of completions by hour of the day (based on physical rooms)
     const hourlyBins = Array.from({ length: 10 }, (_, i) => {
       const hour = 8 + i; // 8h to 17h
       return {
@@ -447,7 +582,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       };
     });
 
-    completedTasksList.forEach(t => {
+    completedClassics.concat(completedDorms).forEach(t => {
       if (t.completedAt) {
         const hour = t.completedAt.getHours();
         const bin = hourlyBins.find(b => b.hourNum === hour) || (hour >= 17 ? hourlyBins[9] : null);
@@ -457,15 +592,15 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       }
     });
 
-    // 9. Leaderboard Podium sorting
-    const podiumVolume = [...staffStats].sort((a, b) => b.roomsCleaned - a.roomsCleaned).slice(0, 3);
+    // 11. Leaderboard Podium sorting
+    const podiumVolume = [...staffStats].sort((a, b) => (b.classicCleaned + b.bedsCleaned) - (a.classicCleaned + a.bedsCleaned)).slice(0, 3);
     const podiumSpeed = [...staffStats]
-      .filter(s => s.avgSpeed !== null)
-      .sort((a, b) => a.avgSpeed - b.avgSpeed)
+      .filter(s => s.avgClassicBlanc !== null)
+      .sort((a, b) => a.avgClassicBlanc - b.avgClassicBlanc)
       .slice(0, 3);
     const podiumEfficiency = [...staffStats].sort((a, b) => b.roomsPerHour - a.roomsPerHour).slice(0, 3);
 
-    // 10. Progress trend chart data
+    // 12. Progress trend chart data
     const trendData = filteredSummaries
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(s => {
@@ -481,18 +616,27 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         };
       });
 
-    // 11. Compute daily adequacy metrics (workload vs capacity) for the calendar using physical rooms
+    // 13. Compute daily adequacy metrics (workload vs capacity) for the calendar using granular weights
     const adequacyCalendar = filteredSummaries
       .sort((a, b) => b.date.localeCompare(a.date)) // Newest first
       .map(s => {
-        const dayDoneBlanc = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.blanc || 0), 0) : 0;
-        const dayDoneRecouche = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.recouche || 0), 0) : 0;
+        const dayDoneClassicBlanc = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.classicBlanc || 0), 0) : 0;
+        const dayDoneClassicRecouche = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.classicRecouche || 0), 0) : 0;
+        const dayDoneBedsBlanc = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.bedsBlanc || 0), 0) : 0;
+        const dayDoneBedsRecouche = s.byStaff ? s.byStaff.reduce((sum, st) => sum + (st.bedsRecouche || 0), 0) : 0;
         
-        const avgB = globalAvgBlanc || 25;
-        const avgR = globalAvgRecouche || 12;
-        const estWorkloadMin = (dayDoneBlanc * avgB) + (dayDoneRecouche * avgR);
+        const avgCB = avgClassicBlanc || 25;
+        const avgCR = avgClassicRecouche || 12;
+        const avgBB = avgBedBlanc || 10;
+        const avgBR = avgBedRecouche || 5;
+
+        // Estimated workload in minutes (weights corresponding to each type)
+        const estWorkloadMin = (dayDoneClassicBlanc * avgCB) + 
+                               (dayDoneClassicRecouche * avgCR) + 
+                               (dayDoneBedsBlanc * avgBB) + 
+                               (dayDoneBedsRecouche * avgBR);
+
         const estWorkloadHours = Math.round((estWorkloadMin / 60) * 10) / 10;
-        
         const capacityHours = s.byStaff ? s.byStaff.reduce((sum, st) => sum + getShiftHours(st.shift_start, st.shift_end), 0) : 0;
         const staffCount = s.byStaff ? s.byStaff.length : 0;
 
@@ -542,19 +686,23 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           label,
           color,
           textColor,
-          borderColor,
-          doneBlanc: dayDoneBlanc,
-          doneRecouche: dayDoneRecouche
+          borderColor
         };
       });
 
     return {
       staffStats,
       totalRooms,
+      totalBeds,
       totalWorkedDays,
       totalShiftHours: Math.round(totalShiftHours),
-      globalAvgBlanc,
-      globalAvgRecouche,
+      avgClassicBlanc,
+      avgClassicRecouche,
+      avgTimePerBed,
+      avgBedBlanc,
+      avgBedRecouche,
+      avgDormBlancBlock,
+      avgDormRecoucheBlock,
       globalRoomsPerHour,
       hourlyData: hourlyBins,
       suspectValidations,
@@ -619,7 +767,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 shadow-sm" style={{ padding: '20px 24px' }}>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Tableau de bord de performance</h2>
-          <p className="text-sm text-gray-500">Statistiques en temps réel issues du terrain et des archives (basées sur les chambres physiques)</p>
+          <p className="text-sm text-gray-500">Statistiques granulaires pour chambres classiques, dortoirs entiers et lits</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
@@ -688,19 +836,23 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="bg-white border-gray-200 shadow-sm">
           <CardContent style={{ padding: '20px 24px' }}>
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chambres faites</div>
-            <div className="text-3xl font-extrabold text-emerald-600 mt-2">{stats.totalRooms}</div>
-            <div className="text-xs text-gray-500 mt-1">Sur la période sélectionnée (chambres physiques)</div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Volume Clean</div>
+            <div className="text-3xl font-extrabold text-emerald-600 mt-2">
+              {stats.totalRooms} <span className="text-sm font-semibold text-gray-400">ch</span> / {stats.totalBeds} <span className="text-sm font-semibold text-gray-400">lits</span>
+            </div>
+            <div className="text-xs text-gray-500 mt-1">Chambres physiques et lits de dortoirs faits</div>
           </CardContent>
         </Card>
 
         <Card className="bg-white border-gray-200 shadow-sm">
           <CardContent style={{ padding: '20px 24px' }}>
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Temps moyen Blanc / Recouche</div>
-            <div className="text-2xl font-extrabold text-indigo-600 mt-2">
-              {stats.globalAvgBlanc ? `${stats.globalAvgBlanc}m` : '--'} <span className="text-gray-400 text-lg font-normal">/</span> {stats.globalAvgRecouche ? `${stats.globalAvgRecouche}m` : '--'}
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Temps moyen Classique / Lit</div>
+            <div className="text-xl font-extrabold text-indigo-600 mt-2">
+              Ch: {stats.avgClassicBlanc ? `${stats.avgClassicBlanc}m` : '--'}/{stats.avgClassicRecouche ? `${stats.avgClassicRecouche}m` : '--'}
+              <span className="block text-xs font-normal text-gray-400 mt-1">
+                Lit dortoir : {stats.avgTimePerBed ? `${stats.avgTimePerBed} min` : '--'}
+              </span>
             </div>
-            <div className="text-xs text-gray-500 mt-1">Hors valeurs aberrantes (&lt;2m, &gt;60m)</div>
           </CardContent>
         </Card>
 
@@ -716,7 +868,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <CardContent style={{ padding: '20px 24px' }}>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Efficacité moyenne</div>
             <div className="text-3xl font-extrabold text-amber-600 mt-2">{stats.globalRoomsPerHour} <span className="text-sm font-normal text-gray-500">ch/h</span></div>
-            <div className="text-xs text-gray-500 mt-1">Chambres nettoyées par heure de shift</div>
+            <div className="text-xs text-gray-500 mt-1">Chambres physiques nettoyées par heure de shift</div>
           </CardContent>
         </Card>
       </div>
@@ -727,14 +879,14 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         {/* Podium Volume */}
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
-            <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">🏆 Volume (Total chambres)</h3>
+            <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">🏆 Volume (Total classique + lits)</h3>
             <div className="flex justify-center items-end space-x-2 h-36 pt-4">
               {/* 2nd Place */}
               {stats.podiums.volume[1] && (
                 <div className="flex flex-col items-center w-20">
                   <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.volume[1].name}</span>
                   <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
-                    {stats.podiums.volume[1].roomsCleaned}
+                    {stats.podiums.volume[1].classicCleaned + stats.podiums.volume[1].bedsCleaned}
                   </div>
                   <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
                 </div>
@@ -744,7 +896,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                 <div className="flex flex-col items-center w-24">
                   <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.volume[0].name}</span>
                   <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
-                    {stats.podiums.volume[0].roomsCleaned}
+                    {stats.podiums.volume[0].classicCleaned + stats.podiums.volume[0].bedsCleaned}
                   </div>
                   <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
                 </div>
@@ -754,7 +906,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                 <div className="flex flex-col items-center w-20">
                   <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.volume[2].name}</span>
                   <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
-                    {stats.podiums.volume[2].roomsCleaned}
+                    {stats.podiums.volume[2].classicCleaned + stats.podiums.volume[2].bedsCleaned}
                   </div>
                   <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
                 </div>
@@ -766,14 +918,14 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         {/* Podium Speed */}
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
-            <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">⚡ Vitesse (Temps moyen)</h3>
+            <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">⚡ Vitesse (Moyenne classique)</h3>
             <div className="flex justify-center items-end space-x-2 h-36 pt-4">
               {/* 2nd Place */}
               {stats.podiums.speed[1] && (
                 <div className="flex flex-col items-center w-20">
                   <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.speed[1].name}</span>
                   <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
-                    {stats.podiums.speed[1].avgSpeed}m
+                    {stats.podiums.speed[1].avgClassicBlanc}m
                   </div>
                   <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
                 </div>
@@ -783,7 +935,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                 <div className="flex flex-col items-center w-24">
                   <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.speed[0].name}</span>
                   <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
-                    {stats.podiums.speed[0].avgSpeed}m
+                    {stats.podiums.speed[0].avgClassicBlanc}m
                   </div>
                   <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
                 </div>
@@ -793,7 +945,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                 <div className="flex flex-col items-center w-20">
                   <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.speed[2].name}</span>
                   <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
-                    {stats.podiums.speed[2].avgSpeed}m
+                    {stats.podiums.speed[2].avgClassicBlanc}m
                   </div>
                   <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
                 </div>
@@ -847,7 +999,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         <CardContent style={{ padding: '0' }}>
           <div className="border-b border-gray-100" style={{ padding: '20px 24px' }}>
             <h3 className="text-base font-bold text-gray-800">Synthèse détaillée par collaborateur</h3>
-            <p className="text-xs text-gray-400 mt-1">Données complètes pour l'intégralité du personnel enregistré (basées sur les chambres physiques)</p>
+            <p className="text-xs text-gray-400 mt-1">Données détaillées pour chambres classiques, dortoirs entiers et lits individuels</p>
           </div>
           
           <div className="overflow-x-auto">
@@ -855,14 +1007,14 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               <thead>
                 <tr className="bg-gray-50 text-gray-400 font-semibold uppercase text-[10px] tracking-wider border-b border-gray-100">
                   <th style={{ padding: '12px 16px' }}>Collaborateur</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Jours travaillés</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Présence (h)</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Chambres faites</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Blanc / Recouche</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Chambres / jour</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Rendement (ch/h)</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Blanc</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Recouche</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Jours</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Présence</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Chambres Cl.</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Dortoirs Ph.</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Lits faits</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Classique (B/R)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Dortoir entier</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Moy. Lit</th>
                   <th style={{ padding: '12px 16px', textAlign: 'center' }}>Incidents</th>
                   <th style={{ padding: '12px 16px', textAlign: 'center' }}>Saisies Suspectes</th>
                 </tr>
@@ -873,17 +1025,23 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                     <td style={{ padding: '12px 16px', fontWeight: '600' }} className="text-gray-800">{s.name}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{s.daysWorked}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>{s.totalShiftHours} h</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-emerald-600">{s.roomsCleaned}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px' }} className="text-gray-500">
-                      {s.blancCleaned} B / {s.recoucheCleaned} R
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-emerald-600">
+                      {s.classicCleaned} <span className="text-[10px] text-gray-400 font-normal">({s.classicBlanc}B/{s.classicRecouche}R)</span>
                     </td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{s.roomsPerDay}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600' }} className="text-amber-600">{s.roomsPerHour}/h</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }} className="text-indigo-600">
-                      {s.avgBlanc !== null ? `${s.avgBlanc} min` : '--'}
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-indigo-600">
+                      {s.dormsCleaned} <span className="text-[10px] text-gray-400 font-normal">({s.dormsBlanc}B/{s.dormsRecouche}R)</span>
                     </td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }} className="text-amber-600">
-                      {s.avgRecouche !== null ? `${s.avgRecouche} min` : '--'}
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-amber-600">
+                      {s.bedsCleaned} <span className="text-[10px] text-gray-400 font-normal">({s.bedsBlanc}B/{s.bedsRecouche}R)</span>
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '500' }}>
+                      {s.avgClassicBlanc !== null ? `${s.avgClassicBlanc}m` : '--'} / {s.avgClassicRecouche !== null ? `${s.avgClassicRecouche}m` : '--'}
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '500' }}>
+                      {s.avgDormBlock !== null ? `${s.avgDormBlock} min` : '--'}
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '600' }} className="text-indigo-600">
+                      {s.avgBedTime !== null ? `${s.avgBedTime} min` : '--'}
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       <Badge variant={s.incidentRate > 20 ? 'destructive' : 'secondary'} className="text-[10px]">
@@ -915,7 +1073,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <CardContent style={{ padding: '24px' }}>
             <div className="mb-4">
               <h3 className="text-sm font-bold text-gray-800">Timeline de libération des chambres</h3>
-              <p className="text-xs text-gray-400 mt-1">Répartition des validations par heure de la journée (basée sur les chambres physiques)</p>
+              <p className="text-xs text-gray-400 mt-1">Répartition des validations par heure de la journée (chambres physiques)</p>
             </div>
             
             <div className="h-64">
@@ -973,7 +1131,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <div className="mb-6">
             <h3 className="text-sm font-bold text-gray-800">Calendrier rétroactif d'adéquation des effectifs</h3>
             <p className="text-xs text-gray-400 mt-1">
-              Analyse de l'équilibre quotidien entre la charge de travail (temps estimé) et les heures de présence de l'équipe (shift) basées sur les chambres physiques.
+              Analyse de la planification (charge de travail pondérée vs heures de présence réelles) calculée de manière granulaire.
             </p>
           </div>
 
@@ -1053,7 +1211,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         <CardContent style={{ padding: '24px' }}>
           <div className="mb-4">
             <h3 className="text-sm font-bold text-gray-800">⚠️ Alertes de saisies suspectes (Hors réalité)</h3>
-            <p className="text-xs text-gray-400 mt-1">Validations ultra-rapides (&lt;2 min) ou oublis de validation (&gt;60 min)</p>
+            <p className="text-xs text-gray-400 mt-1">Validations ultra-rapides (&lt;2 min), oublis de validation (&gt;60 min), ou clôtures forcées au rapport</p>
           </div>
 
           {stats.suspectValidations.length === 0 ? (
@@ -1080,7 +1238,9 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                       <td style={{ padding: '8px 16px' }} className="text-xs">{a.time}</td>
                       <td style={{ padding: '8px 16px', fontWeight: 'bold' }} className="text-red-700">Chambre {a.roomNumber}</td>
                       <td style={{ padding: '8px 16px', fontWeight: '500' }}>{a.staffName}</td>
-                      <td style={{ padding: '8px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-red-600">{a.durationMin} min</td>
+                      <td style={{ padding: '8px 16px', textAlign: 'center', fontWeight: 'bold' }} className="text-red-600">
+                        {a.durationMin === '--' ? '--' : `${a.durationMin} min`}
+                      </td>
                       <td style={{ padding: '8px 16px' }} className="text-xs text-red-600 font-semibold">{a.reason}</td>
                     </tr>
                   ))}
