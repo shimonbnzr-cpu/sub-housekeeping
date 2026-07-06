@@ -138,7 +138,7 @@ const compilePhysicalSummary = (s, staff) => {
       : null;
 
     return {
-      roomBase,
+      roomBase: r.roomBase,
       isDone,
       isInProgress,
       isDnd,
