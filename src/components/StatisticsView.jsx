@@ -985,38 +985,47 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
             <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">🏆 Volume (Total classique + lits)</h3>
-            <div className="flex justify-center items-end space-x-2 h-36 pt-4">
-              {/* 2nd Place */}
-              {stats.podiums.volume[1] && (
-                <div className="flex flex-col items-center w-20">
-                  <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.volume[1].name}</span>
-                  <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
-                    {stats.podiums.volume[1].classicCleaned + stats.podiums.volume[1].bedsCleaned}
+            {stats.podiums.volume.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-36 text-center px-4">
+                <span className="text-2xl mb-1">🧹</span>
+                <p className="text-xs text-gray-400 font-medium">
+                  Aucun nettoyage enregistré sur cette période.
+                </p>
+              </div>
+            ) : (
+              <div className="flex justify-center items-end space-x-2 h-36 pt-4">
+                {/* 2nd Place */}
+                {stats.podiums.volume[1] && (
+                  <div className="flex flex-col items-center w-20">
+                    <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.volume[1].name}</span>
+                    <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
+                      {stats.podiums.volume[1].classicCleaned + stats.podiums.volume[1].bedsCleaned}
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
                   </div>
-                  <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
-                </div>
-              )}
-              {/* 1st Place */}
-              {stats.podiums.volume[0] && (
-                <div className="flex flex-col items-center w-24">
-                  <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.volume[0].name}</span>
-                  <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
-                    {stats.podiums.volume[0].classicCleaned + stats.podiums.volume[0].bedsCleaned}
+                )}
+                {/* 1st Place */}
+                {stats.podiums.volume[0] && (
+                  <div className="flex flex-col items-center w-24">
+                    <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.volume[0].name}</span>
+                    <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
+                      {stats.podiums.volume[0].classicCleaned + stats.podiums.volume[0].bedsCleaned}
+                    </div>
+                    <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
                   </div>
-                  <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
-                </div>
-              )}
-              {/* 3rd Place */}
-              {stats.podiums.volume[2] && (
-                <div className="flex flex-col items-center w-20">
-                  <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.volume[2].name}</span>
-                  <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
-                    {stats.podiums.volume[2].classicCleaned + stats.podiums.volume[2].bedsCleaned}
+                )}
+                {/* 3rd Place */}
+                {stats.podiums.volume[2] && (
+                  <div className="flex flex-col items-center w-20">
+                    <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.volume[2].name}</span>
+                    <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
+                      {stats.podiums.volume[2].classicCleaned + stats.podiums.volume[2].bedsCleaned}
+                    </div>
+                    <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
                   </div>
-                  <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1024,38 +1033,47 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
             <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">⚡ Vitesse (Moyenne classique)</h3>
-            <div className="flex justify-center items-end space-x-2 h-36 pt-4">
-              {/* 2nd Place */}
-              {stats.podiums.speed[1] && (
-                <div className="flex flex-col items-center w-20">
-                  <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.speed[1].name}</span>
-                  <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
-                    {stats.podiums.speed[1].avgClassicBlanc}m
+            {stats.podiums.speed.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-36 text-center px-4">
+                <span className="text-2xl mb-1">⚡</span>
+                <p className="text-xs text-gray-400 font-medium">
+                  Aucune validation de chambre classique à blanc sur cette période.
+                </p>
+              </div>
+            ) : (
+              <div className="flex justify-center items-end space-x-2 h-36 pt-4">
+                {/* 2nd Place */}
+                {stats.podiums.speed[1] && (
+                  <div className="flex flex-col items-center w-20">
+                    <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.speed[1].name}</span>
+                    <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
+                      {stats.podiums.speed[1].avgClassicBlanc}m
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
                   </div>
-                  <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
-                </div>
-              )}
-              {/* 1st Place */}
-              {stats.podiums.speed[0] && (
-                <div className="flex flex-col items-center w-24">
-                  <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.speed[0].name}</span>
-                  <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
-                    {stats.podiums.speed[0].avgClassicBlanc}m
+                )}
+                {/* 1st Place */}
+                {stats.podiums.speed[0] && (
+                  <div className="flex flex-col items-center w-24">
+                    <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.speed[0].name}</span>
+                    <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
+                      {stats.podiums.speed[0].avgClassicBlanc}m
+                    </div>
+                    <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
                   </div>
-                  <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
-                </div>
-              )}
-              {/* 3rd Place */}
-              {stats.podiums.speed[2] && (
-                <div className="flex flex-col items-center w-20">
-                  <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.speed[2].name}</span>
-                  <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
-                    {stats.podiums.speed[2].avgClassicBlanc}m
+                )}
+                {/* 3rd Place */}
+                {stats.podiums.speed[2] && (
+                  <div className="flex flex-col items-center w-20">
+                    <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.speed[2].name}</span>
+                    <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
+                      {stats.podiums.speed[2].avgClassicBlanc}m
+                    </div>
+                    <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
                   </div>
-                  <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1063,38 +1081,47 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
             <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">📈 Rendement (Chambres/heure)</h3>
-            <div className="flex justify-center items-end space-x-2 h-36 pt-4">
-              {/* 2nd Place */}
-              {stats.podiums.efficiency[1] && (
-                <div className="flex flex-col items-center w-20">
-                  <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.efficiency[1].name}</span>
-                  <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
-                    {stats.podiums.efficiency[1].roomsPerHour}/h
+            {stats.podiums.efficiency.length === 0 || stats.totalShiftHours === 0 ? (
+              <div className="flex flex-col items-center justify-center h-36 text-center px-4">
+                <span className="text-2xl mb-1">📈</span>
+                <p className="text-xs text-gray-400 font-medium">
+                  Aucun shift de travail enregistré sur cette période.
+                </p>
+              </div>
+            ) : (
+              <div className="flex justify-center items-end space-x-2 h-36 pt-4">
+                {/* 2nd Place */}
+                {stats.podiums.efficiency[1] && (
+                  <div className="flex flex-col items-center w-20">
+                    <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.efficiency[1].name}</span>
+                    <div className="bg-gray-200 w-full h-16 rounded-t-lg flex items-center justify-center font-bold text-gray-600 mt-1">
+                      {stats.podiums.efficiency[1].roomsPerHour}/h
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
                   </div>
-                  <span className="text-[10px] text-gray-400 font-semibold mt-1">2ème</span>
-                </div>
-              )}
-              {/* 1st Place */}
-              {stats.podiums.efficiency[0] && (
-                <div className="flex flex-col items-center w-24">
-                  <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.efficiency[0].name}</span>
-                  <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
-                    {stats.podiums.efficiency[0].roomsPerHour}/h
+                )}
+                {/* 1st Place */}
+                {stats.podiums.efficiency[0] && (
+                  <div className="flex flex-col items-center w-24">
+                    <span className="text-xs text-indigo-600 font-bold truncate w-full text-center">👑 {stats.podiums.efficiency[0].name}</span>
+                    <div className="bg-indigo-500 w-full h-24 rounded-t-lg flex items-center justify-center font-extrabold text-white mt-1 shadow-md">
+                      {stats.podiums.efficiency[0].roomsPerHour}/h
+                    </div>
+                    <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
                   </div>
-                  <span className="text-[10px] text-indigo-500 font-bold mt-1">1er</span>
-                </div>
-              )}
-              {/* 3rd Place */}
-              {stats.podiums.efficiency[2] && (
-                <div className="flex flex-col items-center w-20">
-                  <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.efficiency[2].name}</span>
-                  <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
-                    {stats.podiums.efficiency[2].roomsPerHour}/h
+                )}
+                {/* 3rd Place */}
+                {stats.podiums.efficiency[2] && (
+                  <div className="flex flex-col items-center w-20">
+                    <span className="text-xs text-gray-600 font-medium truncate w-full text-center">{stats.podiums.efficiency[2].name}</span>
+                    <div className="bg-orange-100 w-full h-12 rounded-t-lg flex items-center justify-center font-bold text-orange-700 mt-1">
+                      {stats.podiums.efficiency[2].roomsPerHour}/h
+                    </div>
+                    <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
                   </div>
-                  <span className="text-[10px] text-orange-600 font-semibold mt-1">3ème</span>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1183,17 +1210,24 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               </p>
             </div>
             
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.releaseHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-                  <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
-                  <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
-                  <Tooltip formatter={(value) => [`${value} départs`]} />
-                  <Bar dataKey="Chambres libérées" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {stats.totalRooms === 0 ? (
+              <div className="h-64 flex flex-col items-center justify-center text-gray-400 text-center px-4">
+                <span className="text-2xl mb-1">🚪</span>
+                <p className="text-xs font-medium">Aucun départ client ou chambre libérée sur cette période.</p>
+              </div>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stats.releaseHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                    <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
+                    <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
+                    <Tooltip formatter={(value) => [`${value} départs`]} />
+                    <Bar dataKey="Chambres libérées" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1207,17 +1241,24 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               </p>
             </div>
             
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.readyHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-                  <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
-                  <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
-                  <Tooltip formatter={(value) => [`${value} chambres prêtes`]} />
-                  <Bar dataKey="Chambres prêtes" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {stats.totalRooms === 0 ? (
+              <div className="h-64 flex flex-col items-center justify-center text-gray-400 text-center px-4">
+                <span className="text-2xl mb-1">✨</span>
+                <p className="text-xs font-medium">Aucune chambre nettoyée sur cette période.</p>
+              </div>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stats.readyHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                    <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
+                    <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
+                    <Tooltip formatter={(value) => [`${value} chambres prêtes`]} />
+                    <Bar dataKey="Chambres prêtes" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1357,45 +1398,53 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {stats.adequacyCalendar.map((day, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50 text-gray-700">
-                    <td style={{ padding: '12px 16px', fontWeight: '600' }} className="text-gray-800 capitalize">{day.formattedDate}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.staffCount} pers</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                      <span className="font-semibold text-emerald-600">{day.classicBlancCount + day.classicRecoucheCount}</span>
-                      <span className="text-[11px] text-gray-400 ml-1">({day.classicBlancCount}B / {day.classicRecoucheCount}R)</span>
-                    </td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                      <span className="font-semibold text-amber-600">{day.bedsBlancCount + day.bedsRecoucheCount}</span>
-                      <span className="text-[11px] text-gray-400 ml-1">({day.bedsBlancCount}B / {day.bedsRecoucheCount}R)</span>
-                    </td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.workload} h</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.capacity} h</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }}>
-                      {day.capacity === 0 ? (
-                        <span className="text-gray-400">--</span>
-                      ) : day.diff < 0 ? (
-                        <span className="text-red-600">🚨 {day.diff} h</span>
-                      ) : (
-                        <span className="text-emerald-600">🟢 +{day.diff} h</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                      <span
-                        style={{
-                          backgroundColor: day.color,
-                          color: day.textColor,
-                          fontSize: '11px',
-                          fontWeight: 'bold',
-                          padding: '3px 8px',
-                          borderRadius: '12px'
-                        }}
-                      >
-                        {day.label}
-                      </span>
+                {stats.adequacyCalendar.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-gray-400 font-medium text-xs">
+                      Aucune donnée d'adéquation disponible pour cette période.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  stats.adequacyCalendar.map((day, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50 text-gray-700">
+                      <td style={{ padding: '12px 16px', fontWeight: '600' }} className="text-gray-800 capitalize">{day.formattedDate}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.staffCount} pers</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                        <span className="font-semibold text-emerald-600">{day.classicBlancCount + day.classicRecoucheCount}</span>
+                        <span className="text-[11px] text-gray-400 ml-1">({day.classicBlancCount}B / {day.classicRecoucheCount}R)</span>
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                        <span className="font-semibold text-amber-600">{day.bedsBlancCount + day.bedsRecoucheCount}</span>
+                        <span className="text-[11px] text-gray-400 ml-1">({day.bedsBlancCount}B / {day.bedsRecoucheCount}R)</span>
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.workload} h</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.capacity} h</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }}>
+                        {day.capacity === 0 ? (
+                          <span className="text-gray-400">--</span>
+                        ) : day.diff < 0 ? (
+                          <span className="text-red-600">🚨 {day.diff} h</span>
+                        ) : (
+                          <span className="text-emerald-600">🟢 +{day.diff} h</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                        <span
+                          style={{
+                            backgroundColor: day.color,
+                            color: day.textColor,
+                            fontSize: '11px',
+                            fontWeight: 'bold',
+                            padding: '3px 8px',
+                            borderRadius: '12px'
+                          }}
+                        >
+                          {day.label}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
