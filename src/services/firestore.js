@@ -308,6 +308,7 @@ export const markAsFreed = async (roomId) => {
   
   await updateDoc(taskRef, {
     cleaning_freed: true,
+    cleaning_freedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
 };
@@ -319,6 +320,7 @@ export const clearFreed = async (roomId) => {
   
   await updateDoc(taskRef, {
     cleaning_freed: false,
+    cleaning_freedAt: null,
     updatedAt: serverTimestamp()
   });
 };

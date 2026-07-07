@@ -25,9 +25,40 @@ const parseDate = (val) => {
 // Helper to parse time string "HH:MM" to minutes
 const parseTime = (timeStr) => {
   if (!timeStr) return null;
-  const parts = timeStr.split(':');
+  const cleanStr = timeStr.replace('h', ':').trim();
+  const parts = cleanStr.split(':');
   if (parts.length < 2) return null;
   return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+};
+
+// Helper to parse late checkout time and return a Date object
+const parseLateCheckout = (timeStr, baseDateStr) => {
+  if (!timeStr) return null;
+  const cleanStr = timeStr.replace('h', ':').trim();
+  const parts = cleanStr.split(':');
+  if (parts.length === 0) return null;
+  const hour = parseInt(parts[0], 10);
+  const minute = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+  if (isNaN(hour)) return null;
+  
+  const d = new Date(baseDateStr + 'T00:00:00');
+  d.setHours(hour, minute, 0, 0);
+  return d;
+};
+
+// Determines checkout release time for a task (1. freedAt, 2. lateCheckout, 3. default to 11:00)
+const getReleaseTime = (t, baseDateStr) => {
+  const freedAt = parseDate(t.cleaning_freedAt);
+  if (freedAt) return freedAt;
+  
+  if (t.cleaning_lateCheckoutTime) {
+    const lateTime = parseLateCheckout(t.cleaning_lateCheckoutTime, baseDateStr);
+    if (lateTime) return lateTime;
+  }
+  
+  const d = new Date(baseDateStr + 'T00:00:00');
+  d.setHours(11, 0, 0, 0);
+  return d;
 };
 
 // Calculate shift duration in hours
@@ -164,7 +195,7 @@ const compilePhysicalSummary = (s, staff) => {
   const byStaff = presentStaffIds.map(staffId => {
     const staffMember = staff.find(st => st.id === staffId);
     
-    // Find all completed tasks directly for accurate bed counts (preventing (0B/0R) bug)
+    // Find all completed tasks directly for accurate bed counts (fixing (0B/0R) bug)
     const staffDoneTasks = snapshot.filter(t => t.cleaning_assignedTo === staffId && t.cleaning_status === 'done');
     
     const classicBlanc = staffDoneTasks.filter(t => !String(t.roomNumber).includes('-') && t.cleaning_type === 'blanc').length;
@@ -200,8 +231,8 @@ const compilePhysicalSummary = (s, staff) => {
       classicRecouche,
       
       dormsDone: dormsDone.length,
-      dormsBlanc,
-      dormsRecouche,
+      dormsBlanc: dormsBlanc.length,
+      dormsRecouche: dormsRecouche.length,
 
       // Bed counts
       bedsDone,
@@ -571,8 +602,28 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
     const totalShiftHours = staffStats.reduce((sum, s) => sum + s.totalShiftHours, 0);
     const globalRoomsPerHour = totalShiftHours > 0 ? Math.round((totalRooms / totalShiftHours) * 10) / 10 : 0;
 
-    // Timelines of completions by hour of the day (based on physical rooms)
-    const hourlyBins = Array.from({ length: 10 }, (_, i) => {
+    // Timeline 1: Room Ready (Disponibilité) - when housekeepers finish cleaning
+    const readyHourlyBins = Array.from({ length: 10 }, (_, i) => {
+      const hour = 8 + i; // 8h to 17h
+      return {
+        hour: `${hour}h`,
+        hourNum: hour,
+        'Chambres prêtes': 0
+      };
+    });
+
+    completedClassics.concat(completedDorms).forEach(t => {
+      if (t.completedAt) {
+        const hour = t.completedAt.getHours();
+        const bin = readyHourlyBins.find(b => b.hourNum === hour) || (hour >= 17 ? readyHourlyBins[9] : null);
+        if (bin) {
+          bin['Chambres prêtes']++;
+        }
+      }
+    });
+
+    // Timeline 2: Room Released (Libération / Checkouts) - standard 11h, late checkout, or freedAt click
+    const releaseHourlyBins = Array.from({ length: 10 }, (_, i) => {
       const hour = 8 + i; // 8h to 17h
       return {
         hour: `${hour}h`,
@@ -581,14 +632,21 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       };
     });
 
-    completedClassics.concat(completedDorms).forEach(t => {
-      if (t.completedAt) {
-        const hour = t.completedAt.getHours();
-        const bin = hourlyBins.find(b => b.hourNum === hour) || (hour >= 17 ? hourlyBins[9] : null);
-        if (bin) {
-          bin['Chambres libérées']++;
+    filteredSummaries.forEach(s => {
+      const snapshot = s.tasksSnapshot || [];
+      snapshot.forEach(t => {
+        // Checkout release is only relevant for checkout rooms (type 'blanc')
+        if (t.cleaning_type === 'blanc') {
+          const releaseTime = getReleaseTime(t, s.date);
+          if (releaseTime) {
+            const hour = releaseTime.getHours();
+            const bin = releaseHourlyBins.find(b => b.hourNum === hour) || (hour >= 17 ? releaseHourlyBins[9] : (hour < 8 ? releaseHourlyBins[0] : null));
+            if (bin) {
+              bin['Chambres libérées']++;
+            }
+          }
         }
-      }
+      });
     });
 
     // Leaderboard Podium sorting
@@ -702,7 +760,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       avgDormBlancBlock,
       avgDormRecoucheBlock,
       globalRoomsPerHour,
-      hourlyData: hourlyBins,
+      readyHourlyData: readyHourlyBins,
+      releaseHourlyData: releaseHourlyBins,
       suspectValidations,
       podiums: {
         volume: podiumVolume,
@@ -1063,31 +1122,60 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         </CardContent>
       </Card>
 
-      {/* Visualizations row: Hourly timeline of releases & Cumulative shift hours per staff */}
+      {/* Visualizations row: Dual Timelines (Checkouts vs Ready) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* Timeline of release times */}
+        {/* Timeline 1: Libération des Chambres (Départs clients) */}
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
             <div className="mb-4">
-              <h3 className="text-sm font-bold text-gray-800">Timeline de libération des chambres</h3>
-              <p className="text-xs text-gray-400 mt-1">Répartition des validations par heure de la journée (chambres physiques)</p>
+              <h3 className="text-sm font-bold text-gray-800">Timeline de libération des chambres (Départs clients)</h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Basé sur le clic « Libérer » dans le dashboard, les Late Checkouts configurés, ou l'heure de départ par défaut à 11h
+              </p>
             </div>
             
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.hourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                <BarChart data={stats.releaseHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
                   <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
                   <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
-                  <Tooltip formatter={(value) => [`${value} chambres`]} />
-                  <Bar dataKey="Chambres libérées" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                  <Tooltip formatter={(value) => [`${value} départs`]} />
+                  <Bar dataKey="Chambres libérées" fill="#F59E0B" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
 
+        {/* Timeline 2: Disponibilité (Chambres prêtes) */}
+        <Card className="bg-white border border-gray-200 shadow-sm">
+          <CardContent style={{ padding: '24px' }}>
+            <div className="mb-4">
+              <h3 className="text-sm font-bold text-gray-800">Timeline de disponibilité (Chambres prêtes)</h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Basé sur le moment où les femmes de chambres cliquent sur « Terminé » (fin réelle du ménage)
+              </p>
+            </div>
+            
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stats.readyHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                  <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
+                  <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
+                  <Tooltip formatter={(value) => [`${value} chambres prêtes`]} />
+                  <Bar dataKey="Chambres prêtes" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Secondary visualizations row: Cumulative presence hours */}
+      <div className="grid grid-cols-1 gap-6">
         {/* Worked Hours Chart */}
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
@@ -1097,8 +1185,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
             </div>
             
             {stats.staffHoursData.length === 0 ? (
-              <div className="h-64 flex items-center justify-center text-gray-400">
-                Aucune heure travaillée enregistrée
+              <div className="h-48 flex items-center justify-center text-gray-400">
+                Aucune heure travaillée enregistrée sur cette période
               </div>
             ) : (
               <div className="h-64">
@@ -1108,7 +1196,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
                     <XAxis dataKey="name" stroke="#6B7280" fontSize={11} />
                     <YAxis stroke="#6B7280" fontSize={11} unit=" h" />
                     <Tooltip formatter={(value) => [`${value} h`]} />
-                    <Bar dataKey="Heures de shift" fill="#818CF8" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Heures de shift" fill="#818CF8" barSize={40} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1198,7 +1286,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         </CardContent>
       </Card>
 
-      {/* NEW: Detailed daily workload vs capacity table */}
+      {/* Detailed daily workload vs capacity table */}
       <Card className="bg-white border border-gray-200 shadow-sm overflow-hidden">
         <CardContent style={{ padding: '0' }}>
           <div className="border-b border-gray-100" style={{ padding: '20px 24px' }}>
