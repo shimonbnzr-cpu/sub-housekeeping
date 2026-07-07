@@ -817,6 +817,50 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
     );
   }
 
+  const periodDescription = useMemo(() => {
+    const now = new Date();
+    
+    const formatDateLong = (d) => {
+      return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    };
+    const formatDateNoDay = (d) => {
+      return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    };
+    const formatMonthYear = (d) => {
+      return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    };
+
+    if (period === 'today') {
+      return `Aujourd'hui : ${formatDateLong(now)}`;
+    }
+    
+    if (period === 'week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.setDate(diff));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return `Cette semaine : du ${formatDateNoDay(monday)} au ${formatDateNoDay(sunday)}`;
+    }
+    
+    if (period === 'month') {
+      return `Ce mois : ${formatMonthYear(now)}`;
+    }
+    
+    if (period === 'year') {
+      return `Cette année : ${now.getFullYear()}`;
+    }
+    
+    if (period === 'custom') {
+      if (!customStartDate || !customEndDate) return 'Période personnalisée';
+      const start = new Date(customStartDate + 'T00:00:00');
+      const end = new Date(customEndDate + 'T00:00:00');
+      return `Période du ${formatDateNoDay(start)} au ${formatDateNoDay(end)}`;
+    }
+    
+    return 'Historique complet';
+  }, [period, customStartDate, customEndDate]);
+
   return (
     <div className="space-y-6 pb-12" style={{ paddingLeft: '8px', paddingRight: '8px' }}>
       
@@ -824,7 +868,11 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 shadow-sm" style={{ padding: '20px 24px' }}>
         <div>
           <h2 className="text-lg font-bold text-gray-800">Tableau de bord de performance</h2>
-          <p className="text-sm text-gray-500">Statistiques granulaires pour chambres classiques, dortoirs entiers et lits</p>
+          <p className="text-sm text-gray-500 mb-2">Statistiques granulaires pour chambres classiques, dortoirs entiers et lits</p>
+          <div className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-2.5 py-1 inline-flex items-center gap-1.5 shadow-sm">
+            <span>📅</span>
+            <span>{periodDescription}</span>
+          </div>
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
