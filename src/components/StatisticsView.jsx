@@ -7,8 +7,6 @@ import {
   XAxis, 
   YAxis, 
   Tooltip, 
-  AreaChart, 
-  Area, 
   CartesianGrid 
 } from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
@@ -158,29 +156,30 @@ const compilePhysicalSummary = (s, staff) => {
     };
   });
 
-  // Re-calculate the staff metrics based on unique physical rooms cleaned
+  // Re-calculate the staff metrics based on unique physical rooms cleaned and direct bed task types
   const presentStaffIds = s.byStaff 
     ? s.byStaff.map(st => st.id) 
     : Array.from(new Set(physicalRooms.map(r => r.assignedStaffId).filter(id => id !== null)));
   
   const byStaff = presentStaffIds.map(staffId => {
     const staffMember = staff.find(st => st.id === staffId);
-    const staffRooms = physicalRooms.filter(r => r.assignedStaffId === staffId);
     
-    const doneRooms = staffRooms.filter(r => r.isDone);
+    // Find all completed tasks directly for accurate bed counts (preventing (0B/0R) bug)
+    const staffDoneTasks = snapshot.filter(t => t.cleaning_assignedTo === staffId && t.cleaning_status === 'done');
     
-    // Separation: Classic rooms vs Dorm rooms
-    const classicDone = doneRooms.filter(r => !r.isDorm);
-    const classicBlanc = classicDone.filter(r => r.type === 'blanc');
-    const classicRecouche = classicDone.filter(r => r.type === 'recouche');
-    
-    const dormsDone = doneRooms.filter(r => r.isDorm);
-    const dormsBlanc = dormsDone.filter(r => r.type === 'blanc');
-    const dormsRecouche = dormsDone.filter(r => r.type === 'recouche');
+    const classicBlanc = staffDoneTasks.filter(t => !String(t.roomNumber).includes('-') && t.cleaning_type === 'blanc').length;
+    const classicRecouche = staffDoneTasks.filter(t => !String(t.roomNumber).includes('-') && t.cleaning_type === 'recouche').length;
+    const classicDone = classicBlanc + classicRecouche;
 
-    const bedsDoneCount = staffRooms.reduce((sum, r) => sum + r.bedsDoneCount, 0);
-    const bedsBlancCount = staffRooms.filter(r => r.isDorm && r.type === 'blanc').reduce((sum, r) => sum + r.bedsDoneCount, 0);
-    const bedsRecoucheCount = staffRooms.filter(r => r.isDorm && r.type === 'recouche').reduce((sum, r) => sum + r.bedsDoneCount, 0);
+    const bedsBlanc = staffDoneTasks.filter(t => String(t.roomNumber).includes('-') && t.cleaning_type === 'blanc').length;
+    const bedsRecouche = staffDoneTasks.filter(t => String(t.roomNumber).includes('-') && t.cleaning_type === 'recouche').length;
+    const bedsDone = bedsBlanc + bedsRecouche;
+
+    // Physical dorms counts
+    const staffRooms = physicalRooms.filter(r => r.assignedStaffId === staffId);
+    const dormsDone = staffRooms.filter(r => r.isDone && r.isDorm);
+    const dormsBlanc = dormsDone.filter(r => r.type === 'blanc').length;
+    const dormsRecouche = dormsDone.filter(r => r.type === 'recouche').length;
 
     const incidentRooms = staffRooms.filter(r => r.incidentText);
     const postponedRooms = staffRooms.filter(r => r.isPostponed);
@@ -193,21 +192,21 @@ const compilePhysicalSummary = (s, staff) => {
     return {
       id: staffId,
       name: staffMember?.name || bsOriginal?.name || 'Inconnu',
-      done: doneRooms.length,
+      done: classicDone + dormsDone.length,
       
       // Granular physical counts
-      classicDone: classicDone.length,
-      classicBlanc: classicBlanc.length,
-      classicRecouche: classicRecouche.length,
+      classicDone,
+      classicBlanc,
+      classicRecouche,
       
       dormsDone: dormsDone.length,
-      dormsBlanc: dormsBlanc.length,
-      dormsRecouche: dormsRecouche.length,
+      dormsBlanc,
+      dormsRecouche,
 
       // Bed counts
-      bedsDone: bedsDoneCount,
-      bedsBlanc: bedsBlancCount,
-      bedsRecouche: bedsRecoucheCount,
+      bedsDone,
+      bedsBlanc,
+      bedsRecouche,
 
       incidents: incidentRooms.length,
       postponed: postponedRooms.length,
@@ -274,7 +273,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
   // --- Core Calculations Engine ---
   const stats = useMemo(() => {
-    // 1. Helper to check if a date falls within the selected period (accesses states inside useMemo)
+    // Helper to check if a date falls within the selected period
     const checkInRange = (dateStr) => {
       const now = new Date();
       const todayStr = now.toLocaleDateString('fr-CA'); // YYYY-MM-DD
@@ -308,14 +307,14 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       return true; // 'all'
     };
 
-    // 2. Compile today's live summary and merge with historical reports
+    // Compile today's live summary and merge with historical reports
     const todaySummary = compileTodaySummary(tasks, staff);
     const combinedSummaries = [
       ...reports.filter(r => r.date !== todaySummary.date),
       todaySummary
     ];
 
-    // 3. Process all summaries to group task listings by physical room unit
+    // Process all summaries to group task listings by physical room unit
     const processedSummaries = combinedSummaries.map(s => {
       if (s.tasksSnapshot && s.tasksSnapshot.length > 0) {
         return compilePhysicalSummary(s, staff);
@@ -323,10 +322,10 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       return s;
     });
 
-    // 4. Filter summaries in the active date period
+    // Filter summaries in the active date period
     const filteredSummaries = processedSummaries.filter(s => checkInRange(s.date));
 
-    // 5. Extract and parse all completed physical rooms details across the period
+    // Extract and parse all completed physical rooms details across the period
     const completedClassics = [];
     const completedDorms = [];
     const suspectValidations = [];
@@ -401,7 +400,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       return b.time.localeCompare(a.time);
     });
 
-    // 7. Calculate Averages
+    // Calculate Averages
     const validClassics = completedClassics.filter(c => !c.isOutlier && !c.isForceCompleted);
     const validClassicBlancs = validClassics.filter(c => c.type === 'blanc').map(c => c.durationMin).filter(v => v !== null);
     const validClassicRecouches = validClassics.filter(c => c.type === 'recouche').map(c => c.durationMin).filter(v => v !== null);
@@ -421,7 +420,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
     // Global time per bed in dorm
     const avgTimePerBed = totalDormBeds > 0 ? Math.round(totalDormTimeMin / totalDormBeds) : null;
     
-    // Split by type (Blanc vs Recouche) for beds
+    // Split by type for beds
     const validDormBlancs = validDorms.filter(d => d.type === 'blanc');
     const dormBlancsTime = validDormBlancs.map(d => d.durationMin).filter(v => v !== null).reduce((a, b) => a + b, 0);
     const dormBlancsBeds = validDormBlancs.reduce((sum, d) => sum + d.bedsDoneCount, 0);
@@ -442,7 +441,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       ? Math.round(validDormRecoucheDurations.reduce((a, b) => a + b, 0) / validDormRecoucheDurations.length)
       : null;
 
-    // 8. Calculate individual metrics for ALL staff members based on physical rooms
+    // Calculate individual metrics for ALL staff members based on physical rooms & direct beds counts
     const staffStats = staff.map(s => {
       let daysWorked = 0;
       let totalShiftHours = 0;
@@ -565,14 +564,14 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       };
     });
 
-    // 9. Global aggregated metrics (based on physical rooms & beds)
+    // Global aggregated metrics
     const totalRooms = staffStats.reduce((sum, s) => sum + s.totalPhysicalRoomsCleaned, 0);
     const totalBeds = staffStats.reduce((sum, s) => sum + s.bedsCleaned, 0);
     const totalWorkedDays = staffStats.reduce((sum, s) => sum + s.daysWorked, 0);
     const totalShiftHours = staffStats.reduce((sum, s) => sum + s.totalShiftHours, 0);
     const globalRoomsPerHour = totalShiftHours > 0 ? Math.round((totalRooms / totalShiftHours) * 10) / 10 : 0;
 
-    // 10. Timelines of completions by hour of the day (based on physical rooms)
+    // Timelines of completions by hour of the day (based on physical rooms)
     const hourlyBins = Array.from({ length: 10 }, (_, i) => {
       const hour = 8 + i; // 8h to 17h
       return {
@@ -592,7 +591,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       }
     });
 
-    // 11. Leaderboard Podium sorting
+    // Leaderboard Podium sorting
     const podiumVolume = [...staffStats].sort((a, b) => (b.classicCleaned + b.bedsCleaned) - (a.classicCleaned + a.bedsCleaned)).slice(0, 3);
     const podiumSpeed = [...staffStats]
       .filter(s => s.avgClassicBlanc !== null)
@@ -600,23 +599,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
       .slice(0, 3);
     const podiumEfficiency = [...staffStats].sort((a, b) => b.roomsPerHour - a.roomsPerHour).slice(0, 3);
 
-    // 12. Progress trend chart data
-    const trendData = filteredSummaries
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map(s => {
-        const parts = s.date.split('-');
-        const shortDate = parts.length === 3 ? `${parts[2]}/${parts[1]}` : s.date;
-        const total = s.summary?.total || 0;
-        const done = s.summary?.done || 0;
-        const rate = total > 0 ? Math.round((done / total) * 100) : 0;
-        return {
-          date: shortDate,
-          'Taux de complétion (%)': rate,
-          'Chambres nettoyées': done
-        };
-      });
-
-    // 13. Compute daily adequacy metrics (workload vs capacity) for the calendar using granular weights
+    // Compute daily adequacy metrics (workload vs capacity) for the calendar and daily table
     const adequacyCalendar = filteredSummaries
       .sort((a, b) => b.date.localeCompare(a.date)) // Newest first
       .map(s => {
@@ -630,7 +613,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         const avgBB = avgBedBlanc || 10;
         const avgBR = avgBedRecouche || 5;
 
-        // Estimated workload in minutes (weights corresponding to each type)
+        // Estimated workload in minutes
         const estWorkloadMin = (dayDoneClassicBlanc * avgCB) + 
                                (dayDoneClassicRecouche * avgCR) + 
                                (dayDoneBedsBlanc * avgBB) + 
@@ -681,14 +664,29 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           formattedDate,
           workload: estWorkloadHours,
           capacity: Math.round(capacityHours * 10) / 10,
+          diff: Math.round((capacityHours - estWorkloadHours) * 10) / 10,
           staffCount,
           status,
           label,
           color,
           textColor,
-          borderColor
+          borderColor,
+          
+          // Breakdown counts
+          classicBlancCount: dayDoneClassicBlanc,
+          classicRecoucheCount: dayDoneClassicRecouche,
+          bedsBlancCount: dayDoneBedsBlanc,
+          bedsRecoucheCount: dayDoneBedsRecouche
         };
       });
+
+    // Chart data for cumulative presence hours
+    const staffHoursData = staffStats
+      .filter(s => s.totalShiftHours > 0)
+      .map(s => ({
+        name: s.name,
+        'Heures de shift': s.totalShiftHours
+      }));
 
     return {
       staffStats,
@@ -711,8 +709,8 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         speed: podiumSpeed,
         efficiency: podiumEfficiency
       },
-      trendData,
-      adequacyCalendar
+      adequacyCalendar,
+      staffHoursData
     };
   }, [tasks, staff, reports, period, customStartDate, customEndDate]);
 
@@ -1065,7 +1063,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
         </CardContent>
       </Card>
 
-      {/* Visualizations row: Timeline and trend */}
+      {/* Visualizations row: Hourly timeline of releases & Cumulative shift hours per staff */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Timeline of release times */}
@@ -1090,34 +1088,28 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           </CardContent>
         </Card>
 
-        {/* Completion rate trend */}
+        {/* Worked Hours Chart */}
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
             <div className="mb-4">
-              <h3 className="text-sm font-bold text-gray-800">Évolution de l'activité quotidienne</h3>
-              <p className="text-xs text-gray-400 mt-1">Tendance de complétion et volumes sur la période</p>
+              <h3 className="text-sm font-bold text-gray-800">Heures de présence cumulées par collaborateur</h3>
+              <p className="text-xs text-gray-400 mt-1">Total des heures de shift enregistrées sur la période</p>
             </div>
             
-            {stats.trendData.length === 0 ? (
+            {stats.staffHoursData.length === 0 ? (
               <div className="h-64 flex items-center justify-center text-gray-400">
-                Données d'activité insuffisantes
+                Aucune heure travaillée enregistrée
               </div>
             ) : (
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={stats.trendData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10B981" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#10B981" stopOpacity={0.0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                    <XAxis dataKey="date" stroke="#6B7280" fontSize={11} />
-                    <YAxis stroke="#6B7280" fontSize={11} unit="%" domain={[0, 100]} />
-                    <Tooltip formatter={(value, name) => [name === 'Taux de complétion (%)' ? `${value}%` : value, name]} />
-                    <Area type="monotone" dataKey="Taux de complétion (%)" stroke="#10B981" fillOpacity={1} fill="url(#trendGrad)" strokeWidth={2} />
-                  </AreaChart>
+                  <BarChart data={stats.staffHoursData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                    <XAxis dataKey="name" stroke="#6B7280" fontSize={11} />
+                    <YAxis stroke="#6B7280" fontSize={11} unit=" h" />
+                    <Tooltip formatter={(value) => [`${value} h`]} />
+                    <Bar dataKey="Heures de shift" fill="#818CF8" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             )}
@@ -1131,7 +1123,7 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           <div className="mb-6">
             <h3 className="text-sm font-bold text-gray-800">Calendrier rétroactif d'adéquation des effectifs</h3>
             <p className="text-xs text-gray-400 mt-1">
-              Analyse de la planification (charge de travail pondérée vs heures de présence réelles) calculée de manière granulaire.
+              Analyse rapide de l'équilibre quotidien entre la charge théorique (heures de ménage estimées) et la capacité réelle (shifts).
             </p>
           </div>
 
@@ -1203,6 +1195,74 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* NEW: Detailed daily workload vs capacity table */}
+      <Card className="bg-white border border-gray-200 shadow-sm overflow-hidden">
+        <CardContent style={{ padding: '0' }}>
+          <div className="border-b border-gray-100" style={{ padding: '20px 24px' }}>
+            <h3 className="text-base font-bold text-gray-800">Rapport d'adéquation Charge / Capacité quotidien</h3>
+            <p className="text-xs text-gray-400 mt-1">Détail des chambres (Blanc / Recouche), lits de dortoirs et des écarts horaires</p>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead>
+                <tr className="bg-gray-50 text-gray-400 font-semibold uppercase text-[10px] tracking-wider border-b border-gray-100">
+                  <th style={{ padding: '12px 16px' }}>Date</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Effectif présent (ETP)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Chambres Classiques (B / R)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Lits Dortoirs (B / R)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Charge estimée</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Capacité de shift</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Écart (h)</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Diagnostic</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {stats.adequacyCalendar.map((day, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50 text-gray-700">
+                    <td style={{ padding: '12px 16px', fontWeight: '600' }} className="text-gray-800 capitalize">{day.formattedDate}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.staffCount} pers</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <span className="font-semibold text-emerald-600">{day.classicBlancCount + day.classicRecoucheCount}</span>
+                      <span className="text-[11px] text-gray-400 ml-1">({day.classicBlancCount}B / {day.classicRecoucheCount}R)</span>
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <span className="font-semibold text-amber-600">{day.bedsBlancCount + day.bedsRecoucheCount}</span>
+                      <span className="text-[11px] text-gray-400 ml-1">({day.bedsBlancCount}B / {day.bedsRecoucheCount}R)</span>
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.workload} h</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '500' }}>{day.capacity} h</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold' }}>
+                      {day.capacity === 0 ? (
+                        <span className="text-gray-400">--</span>
+                      ) : day.diff < 0 ? (
+                        <span className="text-red-600">🚨 {day.diff} h</span>
+                      ) : (
+                        <span className="text-emerald-600">🟢 +{day.diff} h</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <span
+                        style={{
+                          backgroundColor: day.color,
+                          color: day.textColor,
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          padding: '3px 8px',
+                          borderRadius: '12px'
+                        }}
+                      >
+                        {day.label}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
 
