@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { CLEANING_TYPES } from '../data/rooms';
 import { STAFF as INITIAL_STAFF, LANGUAGES } from '../data/staff';
 import { 
+  subscribeToActiveDate,
+  getActiveDate,
   subscribeToTasks, 
   subscribeToStaff, 
   updateTaskStatus, 
@@ -34,6 +36,7 @@ export default function StaffView() {
     return localStorage.getItem('selectedStaff') || '';
   });
   const [loading, setLoading] = useState(true);
+  const [currentDateKey, setCurrentDateKey] = useState(() => getActiveDate());
   const [selectedTask, setSelectedTask] = useState(null);
   const [showTransfer, setShowTransfer] = useState(false);
   const [incidentModal, setIncidentModal] = useState(null); // { roomId, roomNumber, text }
@@ -69,22 +72,39 @@ export default function StaffView() {
     }
   }, [i18n]);
 
+  // Subscribe to global active date
+  useEffect(() => {
+    const unsubActiveDate = subscribeToActiveDate((dateKey) => {
+      console.log('[Date-Staff] Active date updated to:', dateKey);
+      setCurrentDateKey(dateKey);
+    });
+    return () => unsubActiveDate();
+  }, []);
+
   // Subscribe to realtime updates
   useEffect(() => {
-    const unsubTasks = subscribeToTasks((taskList) => {
-      setTasks(taskList);
-      setLoading(false);
-    });
-    const unsubStaff = subscribeToStaff((staffList) => {
-      if (staffList.length > 0) {
-        setStaff(staffList);
-      }
-    });
-    return () => {
-      unsubTasks();
-      unsubStaff();
+    let unsubTasks;
+    let unsubStaff;
+
+    const init = async () => {
+      unsubTasks = subscribeToTasks((taskList) => {
+        setTasks(taskList);
+        setLoading(false);
+      });
+      unsubStaff = subscribeToStaff((staffList) => {
+        if (staffList.length > 0) {
+          setStaff(staffList);
+        }
+      });
     };
-  }, []);
+
+    init();
+
+    return () => {
+      if (unsubTasks) unsubTasks();
+      if (unsubStaff) unsubStaff();
+    };
+  }, [currentDateKey]);
 
   // Filter tasks for selected staff (new schema)
   const myTasks = tasks.filter(t => t.cleaning_assignedTo === selectedStaff);

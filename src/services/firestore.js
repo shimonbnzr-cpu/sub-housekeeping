@@ -13,13 +13,32 @@ import {
   getDoc
 } from 'firebase/firestore';
 
-// Get today's date as YYYY-MM-DD string
-export const getTodayKey = () => {
-  return new Date().toISOString().split('T')[0];
+// Get today's date in Europe/Paris timezone as YYYY-MM-DD string
+export const getParisTodayKey = () => {
+  try {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
+  } catch (e) {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+};
+
+// Global shared active date state
+let currentActiveDate = getParisTodayKey();
+
+export const getActiveDate = () => {
+  return currentActiveDate;
+};
+
+export const setCurrentActiveDate = (date) => {
+  currentActiveDate = date;
 };
 
 // Collection references
-const getTasksCollection = (date) => collection(db, `daily_planning/${date}/tasks`);
+const getTasksCollection = (date) => collection(db, `daily_planning/${date || getActiveDate()}/tasks`);
 const getStaffCollection = () => collection(db, 'staff');
 
 // ============================================
@@ -27,7 +46,7 @@ const getStaffCollection = () => collection(db, 'staff');
 // Run once to migrate old schema to new schema
 // ============================================
 export const migrateTasksSchema = async () => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const snapshot = await getDocs(getTasksCollection(date));
   
   console.log(`[Migration] Found ${snapshot.size} tasks to migrate`);
@@ -114,9 +133,109 @@ export const migrateTasksSchema = async () => {
 // REALTIME SUBSCRIPTIONS
 // ============================================
 
-// Subscribe to today's tasks (realtime)
+// Subscribe to global active date
+export const subscribeToActiveDate = (callback) => {
+  const ref = doc(db, 'config', 'active_date');
+  return onSnapshot(ref, async (snap) => {
+    const todayParis = getParisTodayKey();
+    if (snap.exists()) {
+      const data = snap.data();
+      const activeDate = data.date;
+      if (activeDate) {
+        // If the active date in base is older than today's local Paris date, update it
+        if (activeDate < todayParis) {
+          console.log('[Date] Active date in base is older. Checking report auto-save for:', activeDate);
+          // Retroactively auto-save report for the older activeDate before shifting to today
+          await checkAndAutoSavePreviousReport(activeDate);
+          
+          console.log('[Date] Shifting active date to today:', todayParis);
+          await setDoc(ref, { date: todayParis });
+          setCurrentActiveDate(todayParis);
+          await ensureAllRoomsHaveTasks(todayParis);
+          await migrateTasksSchema();
+          callback(todayParis);
+        } else {
+          setCurrentActiveDate(activeDate);
+          await ensureAllRoomsHaveTasks(activeDate);
+          await migrateTasksSchema();
+          callback(activeDate);
+        }
+      }
+    } else {
+      // Initialize if doesn't exist
+      console.log('[Date] Active date config doesn\'t exist. Initializing:', todayParis);
+      await setDoc(ref, { date: todayParis });
+      setCurrentActiveDate(todayParis);
+      await ensureAllRoomsHaveTasks(todayParis);
+      await migrateTasksSchema();
+      callback(todayParis);
+    }
+  });
+};
+
+// Update global active date
+export const updateActiveDate = async (newDate) => {
+  const ref = doc(db, 'config', 'active_date');
+  await setDoc(ref, { date: newDate }, { merge: true });
+  setCurrentActiveDate(newDate);
+};
+
+// Retroactive auto-save for a previous date if report is missing
+export const checkAndAutoSavePreviousReport = async (previousDate) => {
+  try {
+    const reportRef = doc(getReportsCollection(), previousDate);
+    const reportSnap = await getDoc(reportRef);
+    if (reportSnap.exists()) {
+      console.log(`[Auto-Report] Report already exists for ${previousDate}.`);
+      return;
+    }
+
+    console.log(`[Auto-Report] Report missing for ${previousDate}. Starting retroactive auto-save...`);
+
+    const tasksCollection = getTasksCollection(previousDate);
+    const tasksSnap = await getDocs(tasksCollection);
+    if (tasksSnap.empty) {
+      console.log(`[Auto-Report] No tasks found for ${previousDate}. Skipping report.`);
+      return;
+    }
+
+    const tasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const staffSnapshot = await getDocs(getStaffCollection());
+    const staff = staffSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Force complete any in-progress tasks
+    const updatedTasks = [...tasks];
+    const inProgress = tasks.filter(t => t.cleaning_status === 'in_progress');
+    for (const task of inProgress) {
+      const taskRef = doc(tasksCollection, task.id);
+      await updateDoc(taskRef, {
+        cleaning_status: 'done',
+        cleaning_completedAt: serverTimestamp(),
+        forceCompletedAtReport: true,
+        updatedAt: serverTimestamp()
+      });
+      const idx = updatedTasks.findIndex(t => t.id === task.id);
+      if (idx !== -1) {
+        updatedTasks[idx] = {
+          ...updatedTasks[idx],
+          cleaning_status: 'done',
+          cleaning_completedAt: new Date(),
+          forceCompletedAtReport: true
+        };
+      }
+    }
+
+    // Save report
+    await generateAndSaveReport(updatedTasks, staff, 'Système (Auto-sauvegarde suite à oubli)', previousDate);
+    console.log(`[Auto-Report] Retroactive auto-save complete for ${previousDate}.`);
+  } catch (err) {
+    console.error(`[Auto-Report] Error in retroactive auto-save for ${previousDate}:`, err);
+  }
+};
+
+// Subscribe to active date's tasks (realtime)
 export const subscribeToTasks = (callback) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const q = query(getTasksCollection(date));
 
   return onSnapshot(q, (snapshot) => {
@@ -145,7 +264,7 @@ export const subscribeToStaff = (callback) => {
 
 // Create or update a task
 export const setTask = async (taskData) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), taskData.roomId);
   
   await setDoc(taskRef, {
@@ -169,7 +288,7 @@ export const setTask = async (taskData) => {
 
 // Batch create tasks (for import)
 export const batchSetTasks = async (tasksData) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   
   for (const taskData of tasksData) {
     const taskRef = doc(getTasksCollection(date), taskData.roomId);
@@ -201,7 +320,7 @@ export const batchSetTasks = async (tasksData) => {
 
 // Start cleaning - set status to in_progress
 export const startTask = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -214,7 +333,7 @@ export const startTask = async (roomId) => {
 
 // Finish cleaning - set status to done
 export const finishTask = async (roomId, incident = null) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -227,7 +346,7 @@ export const finishTask = async (roomId, incident = null) => {
 
 // Mark as DND - skip_reason = 'dnd', status stays 'todo'
 export const markAsDND = async (roomId, existingIncident = null) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   const newIncident = existingIncident && existingIncident !== 'Ne pas déranger' 
@@ -244,7 +363,7 @@ export const markAsDND = async (roomId, existingIncident = null) => {
 
 // Cancel DND - clear skip_reason
 export const cancelDND = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -256,7 +375,7 @@ export const cancelDND = async (roomId) => {
 
 // Postpone - skip_reason = 'postponed', status stays 'todo'
 export const postponeTask = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -269,7 +388,7 @@ export const postponeTask = async (roomId) => {
 
 // Cancel postpone
 export const cancelPostpone = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -281,7 +400,7 @@ export const cancelPostpone = async (roomId) => {
 
 // Set late checkout - just add time, don't change status
 export const setLateCheckout = async (roomId, time) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -292,7 +411,7 @@ export const setLateCheckout = async (roomId, time) => {
 
 // Clear late checkout
 export const clearLateCheckout = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -303,7 +422,7 @@ export const clearLateCheckout = async (roomId) => {
 
 // Mark room as freed (guest left, room needs cleaning)
 export const markAsFreed = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -315,7 +434,7 @@ export const markAsFreed = async (roomId) => {
 
 // Clear freed status
 export const clearFreed = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -331,7 +450,7 @@ export const clearFreed = async (roomId) => {
 
 // Update task status (legacy - maps to new schema)
 export const updateTaskStatus = async (roomId, status, additionalData = {}) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   let cleaning_status = 'todo';
@@ -389,7 +508,7 @@ export const updateTaskStatus = async (roomId, status, additionalData = {}) => {
 
 // Assign task to staff
 export const assignTask = async (roomId, staffId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -400,7 +519,7 @@ export const assignTask = async (roomId, staffId) => {
 
 // Assign multiple tasks
 export const batchAssignTasks = async (roomIds, staffId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   
   for (const roomId of roomIds) {
     const taskRef = doc(getTasksCollection(date), roomId);
@@ -413,7 +532,7 @@ export const batchAssignTasks = async (roomIds, staffId) => {
 
 // Update custom message for multiple tasks
 export const batchUpdateTasksMessage = async (roomIds, message) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   
   for (const roomId of roomIds) {
     const taskRef = doc(getTasksCollection(date), roomId);
@@ -603,7 +722,7 @@ export const autoAssignTasks = async (tasks, staff) => {
 
 // Reset all tasks to todo and unassign (daily reset at 23:59)
 export const resetDailyPlanning = async (tasks) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const snapshot = await getDocs(getTasksCollection(date));
   
   // Get all tasks and staff before deleting
@@ -622,7 +741,7 @@ export const resetDailyPlanning = async (tasks) => {
 
 // Reset all tasks to todo (keep postponed from previous days)
 export const resetAllTasks = async (tasks) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   
   // Ensure all rooms exist first
   await ensureAllRoomsHaveTasks();
@@ -668,7 +787,7 @@ export const resetAllTasks = async (tasks) => {
 
 // Reset type to blanc, keep status
 export const resetTaskTypes = async (tasks) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   
   for (const task of tasks) {
     const taskRef = doc(getTasksCollection(date), task.roomId);
@@ -682,7 +801,7 @@ export const resetTaskTypes = async (tasks) => {
 
 // Ensure all rooms have a task (create if missing)
 export const ensureAllRoomsHaveTasks = async () => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const snapshot = await getDocs(getTasksCollection(date));
   const existingIds = new Set(snapshot.docs.map(d => d.id));
   
@@ -713,7 +832,7 @@ export const ensureAllRoomsHaveTasks = async () => {
 
 // Delete a task (reset room)
 export const deleteTask = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   await deleteDoc(taskRef);
 };
@@ -724,7 +843,7 @@ export const deleteTask = async (roomId) => {
 
 // Add incident to task
 export const addIncident = async (roomId, incident) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   
   await updateDoc(taskRef, {
@@ -821,9 +940,9 @@ export const subscribeToReport = (date, callback) => {
   });
 };
 
-// Generate and save report for today (called before reset)
-export const generateAndSaveReport = async (tasks, staff, authorName = null) => {
-  const date = getTodayKey();
+// Generate and save report (called before reset or automatically)
+export const generateAndSaveReport = async (tasks, staff, authorName = null, dateKey = null) => {
+  const date = dateKey || getActiveDate();
   
   // Calculate summary using new schema
   const doneTasks = tasks.filter(t => t.cleaning_status === 'done');
@@ -978,7 +1097,7 @@ export const canModifyTask = (task) => {
 
 // Reset a task back to todo status (unlocked)
 export const resetTaskToTodo = async (roomId) => {
-  const date = getTodayKey();
+  const date = getActiveDate();
   const taskRef = doc(getTasksCollection(date), roomId);
   await updateDoc(taskRef, {
     cleaning_status: 'todo',

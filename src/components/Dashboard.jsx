@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { 
+  subscribeToActiveDate,
+  getActiveDate,
   subscribeToTasks, 
   subscribeToStaff,
   setTask, 
@@ -67,6 +69,7 @@ export default function Dashboard() {
   const [showReportAuthorDialog, setShowReportAuthorDialog] = useState(false);
   const [reportAuthorError, setReportAuthorError] = useState('');
   const [roomMessage, setRoomMessage] = useState('');
+  const [currentDateKey, setCurrentDateKey] = useState(() => getActiveDate());
   const [inProgressRoomsForReport, setInProgressRoomsForReport] = useState([]);
   const [selectedInProgressRoomIds, setSelectedInProgressRoomIds] = useState({});
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
@@ -82,9 +85,9 @@ export default function Dashboard() {
   const [selectedReport, setSelectedReport] = useState(null);
   const [reports, setReports] = useState([]);
 
-  // Get today's date formatted
-  const today = new Date();
-  const dateStr = today.toLocaleDateString('fr-FR', { 
+  // Get active date formatted
+  const activeDateObj = new Date(currentDateKey + 'T12:00:00');
+  const dateStr = activeDateObj.toLocaleDateString('fr-FR', { 
     weekday: 'long', 
     year: 'numeric', 
     month: 'long', 
@@ -111,60 +114,95 @@ export default function Dashboard() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Subscribe to realtime updates
+  // Subscribe to global active date
+  useEffect(() => {
+    const unsubActiveDate = subscribeToActiveDate((dateKey) => {
+      console.log('[Date] Active date updated to:', dateKey);
+      setCurrentDateKey(dateKey);
+    });
+    return () => unsubActiveDate();
+  }, []);
+
+  // Subscribe to realtime updates for the active date
   useEffect(() => {
     // Force French for Dashboard
     i18n.changeLanguage('fr');
 
     let unsubStaff;
+    let unsubTasks;
+    let unsubReports;
     
     const init = async () => {
-      // Ensure all rooms have tasks (create if missing)
-      await ensureAllRoomsHaveTasks();
-      
-      // Run migration if needed (one-time)
-      await migrateTasksSchema();
-      
       // Subscribe to staff
       unsubStaff = subscribeToStaff((staffList) => {
         if (staffList && Array.isArray(staffList)) {
           setStaff(staffList);
         }
       });
+
+      // Subscribe to tasks for current active date
+      unsubTasks = subscribeToTasks((taskList) => {
+        setTasks(taskList);
+        setLoading(false);
+      });
+
+      // Subscribe to reports list
+      unsubReports = subscribeToReports((reportsList) => {
+        setReports(reportsList);
+      });
     };
     
     init();
     
-    const unsubTasks = subscribeToTasks((taskList) => {
-      setTasks(taskList);
-      setLoading(false);
-    });
-    
-    const unsubReports = subscribeToReports((reportsList) => {
-      setReports(reportsList);
-    });
-    
     return () => {
-      unsubTasks();
+      if (unsubTasks) unsubTasks();
       if (unsubStaff) unsubStaff();
       if (unsubReports) unsubReports();
     };
-  }, []);
+  }, [currentDateKey]);
 
-  // Auto-generate daily report every day at 16:00 (dev test)
+  // Auto-generate daily report every day at 22:00 (Paris time) if not already generated
   useEffect(() => {
-    const checkAndGenerateReport = () => {
+    const checkAndGenerateReport = async () => {
       const now = new Date();
-      if (now.getHours() === 16 && now.getMinutes() === 0) {
-        const todayKey = new Date().toISOString().split('T')[0];
-        const alreadyGenerated = reports.some(r => r.id === todayKey);
+      // Format current Paris time
+      const parisHourStr = now.toLocaleTimeString('en-US', { timeZone: 'Europe/Paris', hour: '2-digit', hour12: false });
+      const parisMinuteStr = now.toLocaleTimeString('en-US', { timeZone: 'Europe/Paris', minute: '2-digit' });
+      const parisHour = parseInt(parisHourStr);
+      const parisMinute = parseInt(parisMinuteStr);
+
+      if (parisHour === 22 && parisMinute === 0) {
+        const activeDate = getActiveDate();
+        const alreadyGenerated = reports.some(r => r.id === activeDate);
         if (alreadyGenerated) {
           console.log('[Auto-Report] Report already exists for today, skipping auto-generation.');
           return;
         }
-        console.log('[Auto-Report] Triggered at', now.toLocaleTimeString(), '| tasks:', tasks.length, '| staff:', staff.length);
+        
+        console.log('[Auto-Report] Triggered at 22:00 Paris time | tasks:', tasks.length, '| staff:', staff.length);
         if (tasks.length > 0 && staff.length > 0) {
-          generateAndSaveReport(tasks, staff);
+          try {
+            const updatedTasks = [...tasks];
+            const inProgress = tasks.filter(t => t.cleaning_status === 'in_progress');
+            
+            for (const task of inProgress) {
+              await updateTaskStatus(task.id, 'done', { forceCompletedAtReport: true });
+              const idx = updatedTasks.findIndex(t => t.id === task.id);
+              if (idx !== -1) {
+                updatedTasks[idx] = {
+                  ...updatedTasks[idx],
+                  cleaning_status: 'done',
+                  cleaning_completedAt: new Date(),
+                  forceCompletedAtReport: true
+                };
+              }
+            }
+
+            await generateAndSaveReport(updatedTasks, staff, 'Système (Auto-sauvegarde suite à oubli)', activeDate);
+            console.log('[Auto-Report] Auto-generated report successfully');
+          } catch (err) {
+            console.error('[Auto-Report] Error in auto-generation:', err);
+          }
         }
       }
     };
@@ -1572,6 +1610,24 @@ function ReportDetail({ report, onBack, tasks, staff }) {
               {report.generatedBy ? `Par ${report.generatedBy}` : ''}
               {report.generatedBy && report.generatedAt ? ' · ' : ''}
               {report.generatedAt ? formatTime(report.generatedAt.seconds ? new Date(report.generatedAt.seconds * 1000).toISOString() : report.generatedAt) : ''}
+            </div>
+          )}
+          {report.generatedBy && report.generatedBy.includes('Système') && (
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: '#FEF2F2',
+              border: '1px solid #FCA5A5',
+              color: '#991B1B',
+              padding: '6px 10px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 600,
+              marginTop: '8px'
+            }}>
+              <span>⚠️</span>
+              <span>Ce rapport a été généré automatiquement suite à un oubli.</span>
             </div>
           )}
         </div>
