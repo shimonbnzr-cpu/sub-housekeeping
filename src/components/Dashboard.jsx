@@ -13,7 +13,7 @@ import {
   subscribeToActiveDate,
   getActiveDate,
   subscribeToTasks, 
-  subscribeToStaff,
+  subscribeToStaff, 
   setTask, 
   updateTaskStatus, 
   assignTask,
@@ -44,7 +44,8 @@ import {
   markAsFreed,
   clearFreed,
   getTaskDisplayStatus,
-  canModifyTask
+  canModifyTask,
+  retroactivelyGenerateAllMissingReports
 } from '../services/firestore';
 import { handlePrint, printSheets, printReport } from '../services/print';
 import { parseMedialogFile } from '../services/import';
@@ -70,6 +71,7 @@ export default function Dashboard() {
   const [reportAuthorError, setReportAuthorError] = useState('');
   const [roomMessage, setRoomMessage] = useState('');
   const [currentDateKey, setCurrentDateKey] = useState(() => getActiveDate());
+  const [retroactiveReportsAlert, setRetroactiveReportsAlert] = useState(null);
   const [inProgressRoomsForReport, setInProgressRoomsForReport] = useState([]);
   const [selectedInProgressRoomIds, setSelectedInProgressRoomIds] = useState({});
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
@@ -120,6 +122,18 @@ export default function Dashboard() {
       console.log('[Date] Active date updated to:', dateKey);
       setCurrentDateKey(dateKey);
     });
+
+    // Run one-time retroactive missing reports check on load
+    const runRetroactiveCheck = async () => {
+      console.log('[Retroactive-Reports] Starting background retroactive check...');
+      const result = await retroactivelyGenerateAllMissingReports();
+      if (result && result.count > 0) {
+        console.log('[Retroactive-Reports] Found and generated missing reports:', result);
+        setRetroactiveReportsAlert(result);
+      }
+    };
+    runRetroactiveCheck();
+
     return () => unsubActiveDate();
   }, []);
 
@@ -810,6 +824,35 @@ export default function Dashboard() {
       <main className="main" onClick={(e) => {
         if (e.target.closest('.bottom-panel') || e.target.closest('.btn') || e.target.closest('.modal')) return;
       }}>
+        {retroactiveReportsAlert && (
+          <div style={{
+            background: '#EFF6FF',
+            border: '1px solid #BFDBFE',
+            borderRadius: 12,
+            padding: '14px 20px',
+            marginBottom: 16,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            color: '#1E40AF',
+            fontSize: 14,
+            fontWeight: 500,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>📝</span>
+              <span>
+                <strong>Rapports sauvegardés :</strong> {retroactiveReportsAlert.count} rapport(s) oublié(s) ont été automatiquement générés pour les dates suivantes : <strong>{retroactiveReportsAlert.dates.join(', ')}</strong>.
+              </span>
+            </div>
+            <button 
+              onClick={() => setRetroactiveReportsAlert(null)}
+              style={{ background: 'none', border: 'none', color: '#3B82F6', cursor: 'pointer', fontSize: 16, padding: '4px 8px', fontWeight: 'bold' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {/* Reports Tab */}
         {activeTab === 'reports' && (
           selectedReport ? (

@@ -233,6 +233,85 @@ export const checkAndAutoSavePreviousReport = async (previousDate) => {
   }
 };
 
+// Retroactively scan and generate all missing reports for the last 90 days
+export const retroactivelyGenerateAllMissingReports = async () => {
+  const generatedDates = [];
+  try {
+    console.log('[Retroactive-Reports] Starting retroactive scan for the last 90 days...');
+    
+    // Get list of existing reports to avoid multiple getDoc queries in the loop
+    const reportsRef = getReportsCollection();
+    const reportsSnap = await getDocs(reportsRef);
+    const existingReportDates = new Set(reportsSnap.docs.map(doc => doc.id));
+    
+    const today = new Date();
+    
+    for (let i = 1; i <= 90; i++) {
+      const prevDateObj = new Date(today);
+      prevDateObj.setDate(today.getDate() - i);
+      
+      // Format as YYYY-MM-DD in Europe/Paris timezone
+      let dateKey;
+      try {
+        dateKey = prevDateObj.toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
+      } catch (e) {
+        const year = prevDateObj.getFullYear();
+        const month = String(prevDateObj.getMonth() + 1).padStart(2, '0');
+        const day = String(prevDateObj.getDate()).padStart(2, '0');
+        dateKey = `${year}-${month}-${day}`;
+      }
+      
+      // Skip if we already have a report
+      if (existingReportDates.has(dateKey)) continue;
+      
+      // Check if tasks exist for this date
+      const tasksCollection = getTasksCollection(dateKey);
+      const tasksSnap = await getDocs(tasksCollection);
+      
+      if (!tasksSnap.empty) {
+        console.log(`[Retroactive-Reports] Found missing report on ${dateKey} with ${tasksSnap.size} tasks. Generating...`);
+        const tasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Fetch staff
+        const staffSnapshot = await getDocs(getStaffCollection());
+        const staff = staffSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Force complete any in-progress tasks
+        const updatedTasks = [...tasks];
+        const inProgress = tasks.filter(t => t.cleaning_status === 'in_progress');
+        for (const task of inProgress) {
+          const taskRef = doc(tasksCollection, task.id);
+          await updateDoc(taskRef, {
+            cleaning_status: 'done',
+            cleaning_completedAt: serverTimestamp(),
+            forceCompletedAtReport: true,
+            updatedAt: serverTimestamp()
+          });
+          const idx = updatedTasks.findIndex(t => t.id === task.id);
+          if (idx !== -1) {
+            updatedTasks[idx] = {
+              ...updatedTasks[idx],
+              cleaning_status: 'done',
+              cleaning_completedAt: new Date(),
+              forceCompletedAtReport: true
+            };
+          }
+        }
+        
+        // Save report
+        await generateAndSaveReport(updatedTasks, staff, 'Système (Auto-sauvegarde suite à oubli)', dateKey);
+        generatedDates.push(dateKey);
+      }
+    }
+    
+    console.log(`[Retroactive-Reports] Scan complete. Generated ${generatedDates.length} reports.`);
+    return { count: generatedDates.length, dates: generatedDates };
+  } catch (err) {
+    console.error('[Retroactive-Reports] Error during retroactive scan:', err);
+    return { count: 0, dates: [] };
+  }
+};
+
 // Subscribe to active date's tasks (realtime)
 export const subscribeToTasks = (callback) => {
   const date = getActiveDate();
