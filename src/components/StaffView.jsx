@@ -354,6 +354,25 @@ export default function StaffView() {
                 {task.cleaning_linenChange && <span>🛏</span>}
               </div>
               
+              {task.cleaning_message && (
+                <div style={{
+                  background: '#EFF6FF',
+                  borderLeft: '4px solid #3B82F6',
+                  color: '#1E40AF',
+                  padding: '8px 12px',
+                  borderRadius: '0 6px 6px 0',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  marginTop: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <span>📝</span>
+                  <span>{task.cleaning_message}</span>
+                </div>
+              )}
+              
               {task.cleaning_incident && (
                 <div className="task-incident">
                   ⚠️ {task.cleaning_incident}
@@ -401,6 +420,25 @@ export default function StaffView() {
                 {task.cleaning_linenChange && <span>🛏</span>}
                 {!task.cleaning_lateCheckoutTime && task.cleaning_freed && <span>🚪 {t('freed')}</span>}
               </div>
+              
+              {task.cleaning_message && (
+                <div style={{
+                  background: '#EFF6FF',
+                  borderLeft: '4px solid #3B82F6',
+                  color: '#1E40AF',
+                  padding: '8px 12px',
+                  borderRadius: '0 6px 6px 0',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  marginTop: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <span>📝</span>
+                  <span>{task.cleaning_message}</span>
+                </div>
+              )}
               
               {task.cleaning_incident && (
                 <div className="task-incident">
@@ -456,6 +494,25 @@ export default function StaffView() {
                     {task.cleaning_linenChange && <span>🛏</span>}
                   </div>
                   
+                  {task.cleaning_message && (
+                    <div style={{
+                      background: '#EFF6FF',
+                      borderLeft: '4px solid #3B82F6',
+                      color: '#1E40AF',
+                      padding: '8px 12px',
+                      borderRadius: '0 6px 6px 0',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      marginTop: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      <span>📝</span>
+                      <span>{task.cleaning_message}</span>
+                    </div>
+                  )}
+                  
                   {task.cleaning_incident && task.cleaning_incident !== 'Ne pas déranger' && (
                     <div className="task-incident">
                       ⚠️ {task.cleaning_incident}
@@ -505,6 +562,25 @@ export default function StaffView() {
                     {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
                     {task.cleaning_linenChange && <span>🛏</span>}
                   </div>
+                  
+                  {task.cleaning_message && (
+                    <div style={{
+                      background: '#EFF6FF',
+                      borderLeft: '4px solid #3B82F6',
+                      color: '#1E40AF',
+                      padding: '8px 12px',
+                      borderRadius: '0 6px 6px 0',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      marginTop: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      <span>📝</span>
+                      <span>{task.cleaning_message}</span>
+                    </div>
+                  )}
                   
                   {task.cleaning_incident && (
                     <div className="task-incident">
@@ -556,6 +632,25 @@ export default function StaffView() {
                 {task.cleaning_lateCheckoutTime && <span>🕐 {task.cleaning_lateCheckoutTime}</span>}
                 {task.cleaning_linenChange && <span>🛏</span>}
               </div>
+              
+              {task.cleaning_message && (
+                <div style={{
+                  background: '#EFF6FF',
+                  borderLeft: '4px solid #3B82F6',
+                  color: '#1E40AF',
+                  padding: '8px 12px',
+                  borderRadius: '0 6px 6px 0',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  marginTop: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <span>📝</span>
+                  <span>{task.cleaning_message}</span>
+                </div>
+              )}
               
               {task.cleaning_incident && (
                 <div className="task-incident">

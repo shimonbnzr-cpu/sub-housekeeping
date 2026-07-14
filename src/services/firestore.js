@@ -411,6 +411,19 @@ export const batchAssignTasks = async (roomIds, staffId) => {
   }
 };
 
+// Update custom message for multiple tasks
+export const batchUpdateTasksMessage = async (roomIds, message) => {
+  const date = getTodayKey();
+  
+  for (const roomId of roomIds) {
+    const taskRef = doc(getTasksCollection(date), roomId);
+    await updateDoc(taskRef, {
+      cleaning_message: message ? message.trim() : null,
+      updatedAt: serverTimestamp()
+    });
+  }
+};
+
 // ============================================
 // AUTO-ASSIGN
 // ============================================

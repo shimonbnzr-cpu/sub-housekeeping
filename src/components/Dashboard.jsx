@@ -16,6 +16,7 @@ import {
   updateTaskStatus, 
   assignTask,
   batchAssignTasks,
+  batchUpdateTasksMessage,
   batchSetTasks,
   resetDailyPlanning,
   setLateCheckout,
@@ -64,6 +65,8 @@ export default function Dashboard() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [reportAuthor, setReportAuthor] = useState(() => localStorage.getItem('reportAuthor') || '');
   const [showReportAuthorDialog, setShowReportAuthorDialog] = useState(false);
+  const [reportAuthorError, setReportAuthorError] = useState('');
+  const [roomMessage, setRoomMessage] = useState('');
   const [inProgressRoomsForReport, setInProgressRoomsForReport] = useState([]);
   const [selectedInProgressRoomIds, setSelectedInProgressRoomIds] = useState({});
   const [lateCheckoutTime, setLateCheckoutTime] = useState('');
@@ -411,6 +414,32 @@ export default function Dashboard() {
     clearSelection();
   };
 
+  const handleApplyMessage = async () => {
+    if (selectedRooms.size === 0) return;
+    try {
+      const ids = Array.from(selectedRooms);
+      await batchUpdateTasksMessage(ids, roomMessage);
+      setRoomMessage('');
+      clearSelection();
+      console.log('[Message] Message updated for selected rooms');
+    } catch (err) {
+      console.error('[Message] Error updating message:', err);
+    }
+  };
+
+  const handleClearMessage = async () => {
+    if (selectedRooms.size === 0) return;
+    try {
+      const ids = Array.from(selectedRooms);
+      await batchUpdateTasksMessage(ids, null);
+      setRoomMessage('');
+      clearSelection();
+      console.log('[Message] Message cleared for selected rooms');
+    } catch (err) {
+      console.error('[Message] Error clearing message:', err);
+    }
+  };
+
   const handleGenerateReport = () => {
     const inProgress = tasks.filter(t => t.cleaning_status === 'in_progress');
     setInProgressRoomsForReport(inProgress);
@@ -419,13 +448,19 @@ export default function Dashboard() {
       initialSelected[t.id] = true;
     });
     setSelectedInProgressRoomIds(initialSelected);
+    setReportAuthorError('');
     setShowReportAuthorDialog(true);
   };
 
   const confirmGenerateReport = async () => {
-    if (reportAuthor.trim()) {
-      localStorage.setItem('reportAuthor', reportAuthor.trim());
+    const authorName = reportAuthor.trim();
+    if (!authorName) {
+      setReportAuthorError('Veuillez renseigner votre prénom.');
+      return;
     }
+    setReportAuthorError('');
+    localStorage.setItem('reportAuthor', authorName);
+    
     setShowReportAuthorDialog(false);
     console.log('[Report] Generating report with', tasks.length, 'tasks,', staff.length, 'staff');
     try {
@@ -445,8 +480,8 @@ export default function Dashboard() {
         }
       }
 
-      await generateAndSaveReport(updatedTasks, staff, reportAuthor.trim());
-      analytics.track('report_generated', { author: reportAuthor.trim(), tasks_count: updatedTasks.length });
+      await generateAndSaveReport(updatedTasks, staff, authorName);
+      analytics.track('report_generated', { author: authorName, tasks_count: updatedTasks.length });
       console.log('[Report] Report generated successfully');
       alert('Rapport généré et sauvegardé.');
     } catch (err) {
@@ -863,6 +898,11 @@ export default function Dashboard() {
                         {task?.cleaning_freed && <span title="Libérée">🚪</span>}
                         {task?.cleaning_linenChange && <span title="Draps">🛏</span>}
                         {displayStatus === 'dnd' && <span title="Ne pas déranger">🚫</span>}
+                        {task?.cleaning_message && (
+                          <span style={{ cursor: 'help', fontSize: '12px' }} title={`Consigne : ${task.cleaning_message}`}>
+                            📝
+                          </span>
+                        )}
                         {task?.cleaning_incident && task.cleaning_incident.length > 0 && (
                           <span style={{ cursor: 'help', fontSize: '12px', position: 'relative' }} title={task.cleaning_incident}>
                             💬
@@ -963,6 +1003,42 @@ export default function Dashboard() {
                     disabled={!lateCheckoutTime || !canChangeLateCheckoutForSelected}
                   >
                     Appliquer
+                  </Button>
+                </div>
+              </div>
+              <div className="action-group">
+                <label>Message / Consigne :</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input 
+                    type="text"
+                    placeholder="Saisir un message..."
+                    value={roomMessage}
+                    onChange={(e) => setRoomMessage(e.target.value)}
+                    style={{
+                      padding: '6px 10px',
+                      border: '1px solid #D1D5DB',
+                      borderRadius: 8,
+                      fontSize: 13,
+                      outline: 'none',
+                      minWidth: 150
+                    }}
+                  />
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={handleApplyMessage}
+                    disabled={!roomMessage.trim()}
+                  >
+                    Ajouter
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={handleClearMessage}
+                    title="Effacer le message"
+                    style={{ padding: '0 8px', color: '#EF4444' }}
+                  >
+                    🗑️
                   </Button>
                 </div>
               </div>
@@ -1263,6 +1339,11 @@ export default function Dashboard() {
                 }}
               />
             </label>
+            {reportAuthorError && (
+              <p style={{ color: '#EF4444', fontSize: 13, fontWeight: '500', margin: 0 }}>
+                ⚠️ {reportAuthorError}
+              </p>
+            )}
 
             {inProgressRoomsForReport.length > 0 && (
               <div style={{ marginTop: 12, borderTop: '1px solid #E5E7EB', paddingTop: 12 }}>
