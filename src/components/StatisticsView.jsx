@@ -276,6 +276,19 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
   const [password, setPassword] = useState('');
   const [isUnlocked, setIsUnlocked] = useState(() => sessionStorage.getItem('stats_unlocked') === 'true');
   const [passwordError, setPasswordError] = useState('');
+  const [chartsActive, setChartsActive] = useState(false);
+
+  // Delay chart activation on unlock/mount to prevent Recharts resize crash
+  React.useEffect(() => {
+    if (isUnlocked) {
+      const timeout = setTimeout(() => {
+        setChartsActive(true);
+      }, 150);
+      return () => clearTimeout(timeout);
+    } else {
+      setChartsActive(false);
+    }
+  }, [isUnlocked]);
 
   // Date range picker states
   const [customStartDate, setCustomStartDate] = useState(() => {
@@ -340,21 +353,22 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
 
     // Compile today's live summary and merge with historical reports
     const todaySummary = compileTodaySummary(tasks, staff);
+    const validReports = Array.isArray(reports) ? reports.filter(r => r && r.date) : [];
     const combinedSummaries = [
-      ...reports.filter(r => r.date !== todaySummary.date),
+      ...validReports.filter(r => r.date !== todaySummary.date),
       todaySummary
     ];
 
     // Process all summaries to group task listings by physical room unit
     const processedSummaries = combinedSummaries.map(s => {
-      if (s.tasksSnapshot && s.tasksSnapshot.length > 0) {
+      if (s && s.tasksSnapshot && s.tasksSnapshot.length > 0) {
         return compilePhysicalSummary(s, staff);
       }
       return s;
     });
 
-    // Filter summaries in the active date period
-    const filteredSummaries = processedSummaries.filter(s => checkInRange(s.date));
+    // Filter summaries in the active date period defensively
+    const filteredSummaries = processedSummaries.filter(s => s && s.date && checkInRange(s.date));
 
     // Extract and parse all completed physical rooms details across the period
     const completedClassics = [];
@@ -710,12 +724,17 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
           }
         }
 
-        const dateObj = new Date(s.date + 'T00:00:00');
-        const formattedDate = dateObj.toLocaleDateString('fr-FR', {
-          weekday: 'short',
-          day: 'numeric',
-          month: 'short'
-        });
+        let formattedDate = '—';
+        if (s && s.date) {
+          const dateObj = new Date(s.date + 'T00:00:00');
+          if (!isNaN(dateObj.getTime())) {
+            formattedDate = dateObj.toLocaleDateString('fr-FR', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short'
+            });
+          }
+        }
 
         return {
           date: s.date,
@@ -1217,20 +1236,24 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               </div>
             ) : (
               <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stats.releaseHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-                    <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
-                    <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
-                    <Tooltip formatter={(value) => [`${value} départs`]} />
-                    <Bar dataKey="Chambres libérées" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {chartsActive ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.releaseHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                      <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
+                      <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
+                      <Tooltip formatter={(value) => [`${value} départs`]} />
+                      <Bar dataKey="Chambres libérées" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-xs text-gray-400">Chargement du graphique...</div>
+                )}
               </div>
             )}
           </CardContent>
         </Card>
-
+ 
         {/* Timeline 2: Disponibilité (Chambres prêtes) */}
         <Card className="bg-white border border-gray-200 shadow-sm">
           <CardContent style={{ padding: '24px' }}>
@@ -1248,21 +1271,25 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               </div>
             ) : (
               <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stats.readyHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-                    <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
-                    <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
-                    <Tooltip formatter={(value) => [`${value} chambres prêtes`]} />
-                    <Bar dataKey="Chambres prêtes" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {chartsActive ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.readyHourlyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                      <XAxis dataKey="hour" stroke="#6B7280" fontSize={11} />
+                      <YAxis stroke="#6B7280" fontSize={11} allowDecimals={false} />
+                      <Tooltip formatter={(value) => [`${value} chambres prêtes`]} />
+                      <Bar dataKey="Chambres prêtes" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-xs text-gray-400">Chargement du graphique...</div>
+                )}
               </div>
             )}
           </CardContent>
         </Card>
       </div>
-
+ 
       {/* Secondary visualizations row: Cumulative presence hours */}
       <div className="grid grid-cols-1 gap-6">
         {/* Worked Hours Chart */}
@@ -1279,15 +1306,19 @@ export default function StatisticsView({ tasks = [], staff = [], reports = [] })
               </div>
             ) : (
               <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stats.staffHoursData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-                    <XAxis dataKey="name" stroke="#6B7280" fontSize={11} />
-                    <YAxis stroke="#6B7280" fontSize={11} unit=" h" />
-                    <Tooltip formatter={(value) => [`${value} h`]} />
-                    <Bar dataKey="Heures de shift" fill="#818CF8" barSize={40} radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {chartsActive ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.staffHoursData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                      <XAxis dataKey="name" stroke="#6B7280" fontSize={11} />
+                      <YAxis stroke="#6B7280" fontSize={11} unit=" h" />
+                      <Tooltip formatter={(value) => [`${value} h`]} />
+                      <Bar dataKey="Heures de shift" fill="#818CF8" barSize={40} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-xs text-gray-400">Chargement du graphique...</div>
+                )}
               </div>
             )}
           </CardContent>

@@ -108,6 +108,13 @@ const resources = {
       addRooms: 'Ajouter',
       availableRooms: 'Chambres disponibles',
       tapToTake: 'Tap pour récupérer',
+      
+      // Clock
+      arrived: 'Arrivée',
+      left: 'Partie',
+      clockOut: 'Je pars',
+      clockOutTitle: '🚪 Pointer mon départ',
+      clockOutConfirm: 'Confirmer votre départ ? Votre heure de fin sera enregistrée.',
     }
   },
   en: {
@@ -216,6 +223,13 @@ const resources = {
       addRooms: 'Add',
       availableRooms: 'Available rooms',
       tapToTake: 'Tap to take',
+      
+      // Clock
+      arrived: 'Arrived',
+      left: 'Left',
+      clockOut: "I'm leaving",
+      clockOutTitle: '🚪 Clock out',
+      clockOutConfirm: 'Confirm your departure? Your end time will be recorded.',
     }
   },
   ro: {
@@ -324,6 +338,13 @@ const resources = {
       addRooms: 'Adaugă',
       availableRooms: 'Camere disponibile',
       tapToTake: 'Tap pentru a prelua',
+      
+      // Clock
+      arrived: 'Sosit',
+      left: 'Plecat',
+      clockOut: 'Plec',
+      clockOutTitle: '🚪 Marchează plecarea',
+      clockOutConfirm: 'Confirmați plecarea? Ora de final va fi înregistrată.',
     }
   }
 };

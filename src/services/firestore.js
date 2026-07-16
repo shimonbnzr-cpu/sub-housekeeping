@@ -499,6 +499,85 @@ export const clearLateCheckout = async (roomId) => {
   });
 };
 
+// ============================================
+// DISTRIBUTION METADATA (who distributed tasks + when)
+// ============================================
+
+// Save distribution metadata for the active date
+export const saveDistributionMeta = async (staffId, staffName) => {
+  const date = getActiveDate();
+  const metaRef = doc(db, `daily_planning/${date}/meta`, 'distribution');
+  
+  await setDoc(metaRef, {
+    distributedBy: staffId,
+    distributedByName: staffName,
+    distributedAt: serverTimestamp(),
+    date
+  });
+};
+
+// Subscribe to distribution metadata for the active date
+export const subscribeToDistributionMeta = (callback) => {
+  const date = getActiveDate();
+  const metaRef = doc(db, `daily_planning/${date}/meta`, 'distribution');
+  
+  return onSnapshot(metaRef, (snap) => {
+    if (snap.exists()) {
+      callback(snap.data());
+    } else {
+      callback(null);
+    }
+  });
+};
+
+// ============================================
+// CLOCK (POINTAGE) — arrival / departure
+// ============================================
+
+// Clock in a staff member
+export const clockIn = async (staffId, staffName) => {
+  const date = getActiveDate();
+  const ref = doc(db, `daily_planning/${date}/clock`, staffId);
+  
+  const existing = await getDoc(ref);
+  if (existing.exists() && existing.data().clockIn) {
+    // Already clocked in today — don't overwrite
+    return;
+  }
+  
+  await setDoc(ref, {
+    staffId,
+    staffName,
+    clockIn: serverTimestamp(),
+    clockOut: null,
+    date
+  });
+};
+
+// Clock out a staff member
+export const clockOut = async (staffId) => {
+  const date = getActiveDate();
+  const ref = doc(db, `daily_planning/${date}/clock`, staffId);
+  
+  await updateDoc(ref, {
+    clockOut: serverTimestamp()
+  });
+};
+
+// Subscribe to all clock records for the active date
+export const subscribeToClockRecords = (callback) => {
+  const date = getActiveDate();
+  const col = collection(db, `daily_planning/${date}/clock`);
+  
+  return onSnapshot(col, (snapshot) => {
+    const records = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(records);
+  });
+};
+
 // Mark room as freed (guest left, room needs cleaning)
 export const markAsFreed = async (roomId) => {
   const date = getActiveDate();

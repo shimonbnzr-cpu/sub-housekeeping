@@ -8,7 +8,7 @@ import {
   subscribeToTasks, 
   subscribeToStaff, 
   updateTaskStatus, 
-  assignTask, 
+  assignTask,
   setStaff as updateStaffInFirestore,
   startTask,
   finishTask,
@@ -19,7 +19,10 @@ import {
   setLateCheckout,
   addIncident,
   getTaskDisplayStatus,
-  canModifyTask
+  canModifyTask,
+  clockIn,
+  clockOut,
+  subscribeToClockRecords
 } from '../services/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,6 +43,8 @@ export default function StaffView() {
   const [selectedTask, setSelectedTask] = useState(null);
   const [showTransfer, setShowTransfer] = useState(false);
   const [incidentModal, setIncidentModal] = useState(null); // { roomId, roomNumber, text }
+  const [myClockRecord, setMyClockRecord] = useState(null);
+  const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
 
   // Change language - update both i18n and Firestore
   const changeLanguage = async (lng) => {
@@ -85,6 +90,7 @@ export default function StaffView() {
   useEffect(() => {
     let unsubTasks;
     let unsubStaff;
+    let unsubClock;
 
     const init = async () => {
       unsubTasks = subscribeToTasks((taskList) => {
@@ -96,6 +102,12 @@ export default function StaffView() {
           setStaff(staffList);
         }
       });
+      unsubClock = subscribeToClockRecords((records) => {
+        if (selectedStaff) {
+          const mine = records.find(r => r.staffId === selectedStaff);
+          setMyClockRecord(mine || null);
+        }
+      });
     };
 
     init();
@@ -103,8 +115,9 @@ export default function StaffView() {
     return () => {
       if (unsubTasks) unsubTasks();
       if (unsubStaff) unsubStaff();
+      if (unsubClock) unsubClock();
     };
-  }, [currentDateKey]);
+  }, [currentDateKey, selectedStaff]);
 
   // Filter tasks for selected staff (new schema)
   const myTasks = tasks.filter(t => t.cleaning_assignedTo === selectedStaff);
@@ -247,9 +260,12 @@ export default function StaffView() {
               {presentStaff.map(s => (
                 <DropdownMenuItem 
                   key={s.id} 
-                  onClick={() => {
+                  onClick={async () => {
                     setSelectedStaff(s.id);
                     localStorage.setItem('selectedStaff', s.id);
+                    // Auto clock-in
+                    await clockIn(s.id, s.name);
+                    analytics.track('staff_clock_in', { staffId: s.id });
                   }}
                   style={{ padding: '12px 16px', fontSize: '16px', cursor: 'pointer' }}
                 >
@@ -278,6 +294,16 @@ export default function StaffView() {
           {activeTasks.length} {t('toDo')} • {inProgressTasks.length} {t('inProgress')}
         </p>
         
+        {/* Clock badge */}
+        {myClockRecord?.clockIn && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#DCFCE7', color: '#15803D', padding: '4px 12px', borderRadius: 20, fontSize: 13, fontWeight: 600, marginTop: 4 }}>
+            <span>✅ {t('arrived') || 'Arrivée'} {myClockRecord.clockIn.toDate ? new Date(myClockRecord.clockIn.toDate()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+            {myClockRecord.clockOut && (
+              <span style={{ color: '#DC2626' }}>· 🚪 {t('left') || 'Partie'} {myClockRecord.clockOut.toDate ? new Date(myClockRecord.clockOut.toDate()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+            )}
+          </div>
+        )}
+        
         {/* Language selector */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -296,6 +322,18 @@ export default function StaffView() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        
+        {/* Clock out button */}
+        {myClockRecord?.clockIn && !myClockRecord?.clockOut && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowClockOutConfirm(true)}
+            style={{ marginLeft: 8, color: '#DC2626', borderColor: '#FCA5A5' }}
+          >
+            🚪 {t('clockOut') || 'Je pars'}
+          </Button>
+        )}
       </div>
 
       {myTasks.length === 0 ? (
@@ -805,6 +843,39 @@ export default function StaffView() {
                 {t('cancel')}
               </Button>
             </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Clock out confirmation */}
+      <Dialog open={showClockOutConfirm} onOpenChange={setShowClockOutConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('clockOutTitle') || '🚪 Pointer mon départ'}</DialogTitle>
+            <DialogDescription>
+              {t('clockOutConfirm') || 'Confirmer votre départ ? Votre heure de fin sera enregistrée.'}
+            </DialogDescription>
+          </DialogHeader>
+          {myClockRecord?.clockIn && (
+            <p style={{ fontSize: 14, color: '#6B7280' }}>
+              {t('arrived') || 'Arrivée'} : {myClockRecord.clockIn.toDate ? new Date(myClockRecord.clockIn.toDate()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—'}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="default"
+              style={{ backgroundColor: '#DC2626' }}
+              onClick={async () => {
+                await clockOut(selectedStaff);
+                analytics.track('staff_clock_out', { staffId: selectedStaff });
+                setShowClockOutConfirm(false);
+              }}
+            >
+              🚪 {t('clockOut') || 'Je pars'}
+            </Button>
+            <Button variant="secondary" onClick={() => setShowClockOutConfirm(false)}>
+              {t('cancel')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

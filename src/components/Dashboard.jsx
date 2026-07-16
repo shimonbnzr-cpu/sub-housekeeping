@@ -45,7 +45,10 @@ import {
   clearFreed,
   getTaskDisplayStatus,
   canModifyTask,
-  retroactivelyGenerateAllMissingReports
+  retroactivelyGenerateAllMissingReports,
+  saveDistributionMeta,
+  subscribeToDistributionMeta,
+  subscribeToClockRecords
 } from '../services/firestore';
 import { handlePrint, printSheets, printReport } from '../services/print';
 import { parseMedialogFile } from '../services/import';
@@ -86,6 +89,10 @@ export default function Dashboard() {
   const staffUrl = `${window.location.origin}/?mode=staff${token ? '&token=' + token : ''}`;
   const [selectedReport, setSelectedReport] = useState(null);
   const [reports, setReports] = useState([]);
+  const [distributionMeta, setDistributionMeta] = useState(null);
+  const [distributorStaffId, setDistributorStaffId] = useState('');
+  const [importError, setImportError] = useState('');
+  const [clockRecords, setClockRecords] = useState([]);
 
   // Get active date formatted
   const activeDateObj = new Date(currentDateKey + 'T12:00:00');
@@ -145,6 +152,8 @@ export default function Dashboard() {
     let unsubStaff;
     let unsubTasks;
     let unsubReports;
+    let unsubDistribution;
+    let unsubClock;
     
     const init = async () => {
       // Subscribe to staff
@@ -164,6 +173,16 @@ export default function Dashboard() {
       unsubReports = subscribeToReports((reportsList) => {
         setReports(reportsList);
       });
+
+      // Subscribe to distribution metadata
+      unsubDistribution = subscribeToDistributionMeta((meta) => {
+        setDistributionMeta(meta);
+      });
+
+      // Subscribe to clock records
+      unsubClock = subscribeToClockRecords((records) => {
+        setClockRecords(records);
+      });
     };
     
     init();
@@ -172,6 +191,8 @@ export default function Dashboard() {
       if (unsubTasks) unsubTasks();
       if (unsubStaff) unsubStaff();
       if (unsubReports) unsubReports();
+      if (unsubDistribution) unsubDistribution();
+      if (unsubClock) unsubClock();
     };
   }, [currentDateKey]);
 
@@ -589,6 +610,12 @@ export default function Dashboard() {
   const confirmImport = async () => {
     if (importedTasks.length === 0) return;
     
+    if (!distributorStaffId) {
+      setImportError('Veuillez sélectionner la personne qui fait la distribution avant de confirmer.');
+      return;
+    }
+    setImportError('');
+    
     try {
       // Get all current room IDs
       const currentRoomIds = new Set(tasks.map(t => t.roomId));
@@ -605,9 +632,16 @@ export default function Dashboard() {
         await updateTaskStatus(room.roomId, 'done');
       }
       
+      // Save distribution metadata
+      if (distributorStaffId) {
+        const distributor = staff.find(s => s.id === distributorStaffId);
+        await saveDistributionMeta(distributorStaffId, distributor?.name || distributorStaffId);
+      }
+      
       analytics.track('medialog_import_completed', {
         rooms_count: importedTasks.length,
-        date: importedFileDate
+        date: importedFileDate,
+        distributed_by: distributorStaffId || 'none'
       });
     } catch (error) {
       console.error('Import error:', error);
@@ -617,6 +651,8 @@ export default function Dashboard() {
     setShowImportModal(false);
     setImportedTasks([]);
     setImportedFileDate(null);
+    setDistributorStaffId('');
+    setImportError('');
   };
 
   // Team management
@@ -711,6 +747,11 @@ export default function Dashboard() {
         <div>
           <h1>🏨 Hôtel SUB</h1>
           <p style={{ fontSize: 12, color: '#6B7280' }}>{dateStr}</p>
+          {distributionMeta && (
+            <p style={{ fontSize: 12, color: '#3B82F6', marginTop: 2 }}>
+              📋 Distribution : {distributionMeta.distributedByName} à {distributionMeta.distributedAt?.toDate ? new Date(distributionMeta.distributedAt.toDate()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—'}
+            </p>
+          )}
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: 8 }}>
           <Button variant="secondary" size="sm" onClick={() => setShowTeamPanel(true)}>
@@ -1194,6 +1235,19 @@ export default function Dashboard() {
                       <>
                         <div>
                           <strong>{s.name}</strong>
+                          {(() => {
+                            const clock = clockRecords.find(c => c.staffId === s.id);
+                            if (!clock) return null;
+                            const inTime = clock.clockIn?.toDate ? new Date(clock.clockIn.toDate()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : null;
+                            const outTime = clock.clockOut?.toDate ? new Date(clock.clockOut.toDate()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : null;
+                            return (
+                              <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+                                {inTime && <span style={{ color: '#15803D' }}>✅ {inTime}</span>}
+                                {outTime && <span style={{ color: '#DC2626' }}> → 🚪 {outTime}</span>}
+                                {inTime && !outTime && <span style={{ color: '#3B82F6', marginLeft: 6 }}>· en cours</span>}
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <label className="toggle" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -1326,6 +1380,48 @@ export default function Dashboard() {
                   }
                   return null;
                 })()}
+                
+                {/* Distribution selector */}
+                <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #E5E7EB' }}>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                    📋 Distribution faite par : <span style={{ color: '#EF4444' }}>*</span>
+                  </label>
+                  <select
+                    value={distributorStaffId}
+                    onChange={(e) => {
+                      setDistributorStaffId(e.target.value);
+                      setImportError('');
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: '1px solid #D1D5DB',
+                      fontSize: 14,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="">— Sélectionner —</option>
+                    {staff.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  {distributorStaffId ? (
+                    <p style={{ fontSize: 12, color: '#6B7280', marginTop: 6 }}>
+                      L'heure de distribution sera enregistrée automatiquement ({new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })})
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>
+                      Sélectionnez le membre du personnel qui organise ou distribue les chambres aujourd'hui.
+                    </p>
+                  )}
+                </div>
+
+                {importError && (
+                  <div style={{ color: '#EF4444', fontSize: '13px', fontWeight: '600', marginBottom: 12 }}>
+                    ⚠️ {importError}
+                  </div>
+                )}
                 
                 <Button onClick={confirmImport} style={{ width: '100%' }}>
                   Confirmer l'import
